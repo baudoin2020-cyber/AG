@@ -412,8 +412,7 @@ def save(filename):
 # ============================================================
 
 _show()
-```
-```python
+
 # ============================================================
 # ag.py
 # Module graphique Python inspiré de Processing
