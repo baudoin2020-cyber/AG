@@ -1,4 +1,3 @@
-```python
 # ============================================================
 # ag.py
 # Bibliothèque graphique Python inspirée de Processing
