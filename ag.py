@@ -1,3 +1,4 @@
+```python
 # ============================================================
 # ag.py
 # Module graphique Python inspiré de Processing
@@ -50,7 +51,7 @@ def _color(c):
     # Couleur hexadécimale
     if isinstance(c, str):
 
-        c = c.lstrip("#")
+        c = c.strip().lstrip("#")
 
         if len(c) == 6:
 
@@ -67,23 +68,24 @@ def _color(c):
             )
 
         raise ValueError(
-            "Couleur hexadécimale invalide"
+            "Couleur hexadécimale invalide : " + c
         )
 
-    # RGB
-    if isinstance(c, tuple):
+    # Couleur RGB
+    if isinstance(c, (tuple, list)):
 
-        if len(c) == 3:
+        if len(c) != 3:
 
-            return tuple(
-                x / 255 for x in c
+            raise ValueError(
+                "Une couleur RGB doit contenir 3 valeurs"
             )
 
-        raise ValueError(
-            "Une couleur RGB doit contenir 3 valeurs"
+        return tuple(
+            x / 255
+            for x in c
         )
 
-    # Gris
+    # Niveau de gris
     if isinstance(c, (int, float)):
 
         c = c / 255
@@ -99,12 +101,13 @@ def _color(c):
 
 def _update():
 
-    if _fig is not None:
+    if _fig is None:
+        return
 
-        _fig.canvas.draw()
+    _fig.canvas.draw_idle()
 
-        if _display is not None:
-            _display.update(_fig)
+    if _display is not None:
+        _display.update(_fig)
 
 
 # ============================================================
@@ -113,8 +116,11 @@ def _update():
 
 def size(w, h):
 
-    global _fig, _ax, _display
-    global width, height
+    global _fig
+    global _ax
+    global _display
+    global width
+    global height
 
     width = w
     height = h
@@ -132,11 +138,9 @@ def size(w, h):
 
     _ax.axis("off")
 
-    # Fond blanc par défaut
     _ax.set_facecolor("white")
     _fig.patch.set_facecolor("white")
 
-    # Affichage Jupyter avec identifiant
     _display = display(
         _fig,
         display_id=True
@@ -151,10 +155,7 @@ def background(c):
 
     color = _color(c)
 
-    # Fond de la zone de dessin
     _ax.set_facecolor(color)
-
-    # Fond de la figure
     _fig.patch.set_facecolor(color)
 
     _update()
@@ -249,21 +250,13 @@ def line(x1, y1, x2, y2):
 
 # ============================================================
 # CIRCLE
+# Processing : circle(x, y, d)
 # ============================================================
 
 def circle(x, y, d):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
-
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
     c = Circle(
         (x, y),
@@ -280,21 +273,13 @@ def circle(x, y, d):
 
 # ============================================================
 # ELLIPSE
+# Processing : ellipse(x, y, w, h)
 # ============================================================
 
 def ellipse(x, y, w, h):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
-
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
     e = Ellipse(
         (x, y),
@@ -312,21 +297,13 @@ def ellipse(x, y, w, h):
 
 # ============================================================
 # RECT
+# Processing : rect(x, y, w, h)
 # ============================================================
 
 def rect(x, y, w, h):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
-
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
     r = Rectangle(
         (x, y),
@@ -355,23 +332,10 @@ def square(x, y, s):
 # TRIANGLE
 # ============================================================
 
-def triangle(
-    x1, y1,
-    x2, y2,
-    x3, y3
-):
+def triangle(x1, y1, x2, y2, x3, y3):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
-
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
     t = Polygon(
         [
@@ -427,11 +391,7 @@ def textSize(n):
 
 def text(s, x, y):
 
-    color = (
-        _stroke
-        if _stroke is not None
-        else (0, 0, 0)
-    )
+    color = _stroke if _stroke is not None else (0, 0, 0)
 
     _ax.text(
         x,
@@ -451,7 +411,6 @@ def text(s, x, y):
 def random(a, b=None):
 
     if b is None:
-
         return rd.uniform(0, a)
 
     return rd.uniform(a, b)
@@ -472,7 +431,11 @@ def randomSeed(seed):
 
 def save(filename):
 
+    if _fig is None:
+        return
+
     _fig.savefig(
         filename,
         bbox_inches="tight"
     )
+```
