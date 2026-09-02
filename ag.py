@@ -1,4 +1,3 @@
-```python
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Ellipse, Rectangle, Polygon, Arc
 from IPython.display import display
@@ -38,59 +37,42 @@ MAGENTA = "#FF00FF"
 
 
 # ============================================================
-# CONVERSION DES COULEURS
+# COULEURS
 # ============================================================
 
 def _color(c):
 
-    # Couleur hexadécimale
     if isinstance(c, str):
 
         c = c.strip().lstrip("#")
 
         if len(c) == 6:
-
             return tuple(
                 int(c[i:i+2], 16) / 255
                 for i in (0, 2, 4)
             )
 
         if len(c) == 3:
-
             return tuple(
                 int(c[i] * 2, 16) / 255
                 for i in range(3)
             )
 
-        raise ValueError(
-            "Couleur hexadécimale invalide"
-        )
+        raise ValueError("Couleur hexadécimale invalide")
 
-    # Couleur RGB
     if isinstance(c, (tuple, list)):
 
         if len(c) != 3:
+            raise ValueError("Une couleur RGB doit contenir 3 valeurs")
 
-            raise ValueError(
-                "Une couleur RGB doit contenir 3 valeurs"
-            )
-
-        # valeurs déjà entre 0 et 1
         if max(c) <= 1:
-
             return tuple(c)
 
-        # valeurs entre 0 et 255
-        return tuple(
-            x / 255
-            for x in c
-        )
+        return tuple(v / 255 for v in c)
 
-    # Niveau de gris
     if isinstance(c, (int, float)):
 
         v = c / 255
-
         return (v, v, v)
 
     raise ValueError("Couleur inconnue")
@@ -105,7 +87,6 @@ def _next_zorder():
     global _zorder
 
     z = _zorder
-
     _zorder += 1
 
     return z
@@ -128,31 +109,22 @@ def size(w, h):
 
     plt.close("all")
 
-    # Respect du rapport largeur / hauteur
     ratio = w / h
 
     if ratio >= 1:
-
         figsize = (8, 8 / ratio)
-
     else:
-
         figsize = (8 * ratio, 8)
 
-    _fig, _ax = plt.subplots(
-        figsize=figsize
-    )
+    _fig, _ax = plt.subplots(figsize=figsize)
 
     _ax.set_xlim(0, width)
-
     _ax.set_ylim(height, 0)
 
     _ax.set_aspect("equal")
-
     _ax.axis("off")
 
     _ax.set_facecolor("white")
-
     _fig.patch.set_facecolor("white")
 
     display(_fig)
@@ -167,10 +139,7 @@ def background(c):
     color = _color(c)
 
     _ax.set_facecolor(color)
-
     _fig.patch.set_facecolor(color)
-
-    _fig.canvas.draw()
 
 
 # ============================================================
@@ -227,17 +196,13 @@ def strokeWeight(n):
 def point(x, y):
 
     if _stroke is None:
-
         return
 
     _ax.plot(
         x,
         y,
         marker="o",
-        markersize=max(
-            1,
-            _strokeWeight * 2
-        ),
+        markersize=max(1, _strokeWeight * 2),
         color=_stroke,
         markeredgewidth=0,
         zorder=_next_zorder()
@@ -251,7 +216,6 @@ def point(x, y):
 def line(x1, y1, x2, y2):
 
     if _stroke is None:
-
         return
 
     _ax.plot(
@@ -265,25 +229,14 @@ def line(x1, y1, x2, y2):
 
 # ============================================================
 # CIRCLE
-# Processing :
-# circle(x, y, diameter)
 # ============================================================
 
 def circle(x, y, d):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
-
-    c = Circle(
+    shape = Circle(
         (x, y),
         d / 2,
         edgecolor=edge,
@@ -292,30 +245,19 @@ def circle(x, y, d):
         zorder=_next_zorder()
     )
 
-    _ax.add_patch(c)
+    _ax.add_patch(shape)
 
 
 # ============================================================
 # ELLIPSE
-# Processing :
-# ellipse(x, y, width, height)
 # ============================================================
 
 def ellipse(x, y, w, h):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
-
-    e = Ellipse(
+    shape = Ellipse(
         (x, y),
         w,
         h,
@@ -325,30 +267,19 @@ def ellipse(x, y, w, h):
         zorder=_next_zorder()
     )
 
-    _ax.add_patch(e)
+    _ax.add_patch(shape)
 
 
 # ============================================================
-# RECT
-# Processing :
-# rect(x, y, width, height)
+# RECTANGLE
 # ============================================================
 
 def rect(x, y, w, h):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
-
-    r = Rectangle(
+    shape = Rectangle(
         (x, y),
         w,
         h,
@@ -358,7 +289,7 @@ def rect(x, y, w, h):
         zorder=_next_zorder()
     )
 
-    _ax.add_patch(r)
+    _ax.add_patch(shape)
 
 
 # ============================================================
@@ -367,37 +298,19 @@ def rect(x, y, w, h):
 
 def square(x, y, s):
 
-    rect(
-        x,
-        y,
-        s,
-        s
-    )
+    rect(x, y, s, s)
 
 
 # ============================================================
 # TRIANGLE
 # ============================================================
 
-def triangle(
-    x1, y1,
-    x2, y2,
-    x3, y3
-):
+def triangle(x1, y1, x2, y2, x3, y3):
 
-    edge = (
-        _stroke
-        if _stroke is not None
-        else "none"
-    )
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
-    face = (
-        _fill
-        if _fill is not None
-        else "none"
-    )
-
-    t = Polygon(
+    shape = Polygon(
         [
             (x1, y1),
             (x2, y2),
@@ -410,24 +323,19 @@ def triangle(
         zorder=_next_zorder()
     )
 
-    _ax.add_patch(t)
+    _ax.add_patch(shape)
 
 
 # ============================================================
 # ARC
 # ============================================================
 
-def arc(
-    x, y,
-    w, h,
-    start, stop
-):
+def arc(x, y, w, h, start, stop):
 
     if _stroke is None:
-
         return
 
-    a = Arc(
+    shape = Arc(
         (x, y),
         w,
         h,
@@ -438,11 +346,11 @@ def arc(
         zorder=_next_zorder()
     )
 
-    _ax.add_patch(a)
+    _ax.add_patch(shape)
 
 
 # ============================================================
-# TEXT SIZE
+# TEXTE
 # ============================================================
 
 def textSize(n):
@@ -452,20 +360,11 @@ def textSize(n):
     _textSize = n
 
 
-# ============================================================
-# TEXT
-# ============================================================
-
 def text(s, x, y):
 
-    color = (
-        _fill
-        if _fill is not None
-        else _stroke
-    )
+    color = _fill if _fill is not None else _stroke
 
     if color is None:
-
         color = (0, 0, 0)
 
     _ax.text(
@@ -480,29 +379,15 @@ def text(s, x, y):
 
 # ============================================================
 # RANDOM
-# Processing :
-# random(high)
-# random(low, high)
 # ============================================================
 
 def random(a, b=None):
 
     if b is None:
+        return rd.uniform(0, a)
 
-        return rd.uniform(
-            0,
-            a
-        )
+    return rd.uniform(a, b)
 
-    return rd.uniform(
-        a,
-        b
-    )
-
-
-# ============================================================
-# RANDOM SEED
-# ============================================================
 
 def randomSeed(seed):
 
@@ -519,18 +404,10 @@ def clear():
 
     _ax.cla()
 
-    _ax.set_xlim(
-        0,
-        width
-    )
-
-    _ax.set_ylim(
-        height,
-        0
-    )
+    _ax.set_xlim(0, width)
+    _ax.set_ylim(height, 0)
 
     _ax.set_aspect("equal")
-
     _ax.axis("off")
 
     _zorder = 1
@@ -543,7 +420,6 @@ def clear():
 def save(filename):
 
     if _fig is None:
-
         return
 
     _fig.savefig(
@@ -551,4 +427,3 @@ def save(filename):
         bbox_inches="tight",
         pad_inches=0
     )
-```
