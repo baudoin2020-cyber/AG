@@ -1,26 +1,22 @@
-import matplotlib.pyplot as plt
+# -*- coding: utf-8 -*-
+
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.patches import Circle, Ellipse, Rectangle, Polygon, Arc
 import random as rd
 
 try:
-    from IPython.display import set_matplotlib_close
-    set_matplotlib_close(False)
+    from IPython import get_ipython
+    from IPython.display import display, clear_output
 except Exception:
-    try:
-        ip = get_ipython()
-        if ip is not None:
-            ip.run_line_magic("config", "InlineBackend.close_figures=False")
-    except Exception:
-        pass
-
-try:
-    plt.ioff()
-except Exception:
-    pass
+    get_ipython = None
+    display = None
+    clear_output = None
 
 
 _fig = None
 _ax = None
+_canvas = None
 
 width = 0
 height = 0
@@ -30,6 +26,9 @@ _fill = None
 _strokeWeight = 1
 _textSize = 12
 _zorder = 1
+
+_dirty = False
+_hook_registered = False
 
 
 BLACK = "#000000"
@@ -42,23 +41,10 @@ CYAN = "#00FFFF"
 MAGENTA = "#FF00FF"
 
 
-def _set_background(ax, color):
-    if hasattr(ax, "set_facecolor"):
-        ax.set_facecolor(color)
-    elif hasattr(ax, "set_axis_bgcolor"):
-        ax.set_axis_bgcolor(color)
-
-
-def _refresh():
-    """
-    Pas d'affichage intermédiaire.
-    Le notebook affiche la figure une seule fois à la fin de la cellule.
-    """
-    return
-
-
 def _color(c):
+
     if isinstance(c, str):
+
         c = c.strip().lstrip("#")
 
         if len(c) == 6:
@@ -76,6 +62,7 @@ def _color(c):
         raise ValueError("Couleur hexadecimale invalide")
 
     if isinstance(c, (tuple, list)):
+
         if len(c) != 3:
             raise ValueError("Une couleur RGB doit contenir 3 valeurs")
 
@@ -85,6 +72,7 @@ def _color(c):
         return tuple(x / 255.0 for x in c)
 
     if isinstance(c, (int, float)):
+
         v = c / 255.0
         return (v, v, v)
 
@@ -92,15 +80,80 @@ def _color(c):
 
 
 def _next_zorder():
+
     global _zorder
 
     z = _zorder
     _zorder += 1
+
     return z
 
 
+def _mark_dirty():
+
+    global _dirty
+
+    _dirty = True
+
+
+def _display_once(*args, **kwargs):
+
+    global _dirty
+
+    if not _dirty:
+        return
+
+    if _fig is None:
+        return
+
+    if display is None:
+        return
+
+    try:
+        if _canvas is not None:
+            _canvas.draw()
+    except Exception:
+        pass
+
+    try:
+        display(_fig)
+    except Exception:
+        pass
+
+    _dirty = False
+
+
+def _register_hook():
+
+    global _hook_registered
+
+    if _hook_registered:
+        return
+
+    if get_ipython is None:
+        return
+
+    try:
+        ip = get_ipython()
+
+        if ip is not None and hasattr(ip, "events"):
+            ip.events.register(
+                "post_run_cell",
+                _display_once
+            )
+
+            _hook_registered = True
+
+    except Exception:
+        pass
+
+
+_register_hook()
+
+
 def size(w, h):
-    global _fig, _ax
+
+    global _fig, _ax, _canvas
     global width, height
     global _zorder
 
@@ -108,75 +161,81 @@ def size(w, h):
     height = h
     _zorder = 1
 
-    plt.close("all")
-
-    # Processing : size(w, h) correspond à w x h pixels.
-    # Matplotlib exprime figsize en pouces : pixels = pouces * dpi.
     dpi = 100.0
-    figsize = (float(w) / dpi, float(h) / dpi)
 
-    _fig, _ax = plt.subplots(
-        figsize=figsize,
+    _fig = Figure(
+        figsize=(
+            float(w) / dpi,
+            float(h) / dpi
+        ),
         dpi=dpi
     )
 
-    # La zone de dessin occupe exactement toute la figure,
-    # sans marges Matplotlib autour du canevas.
-    _fig.subplots_adjust(
-        left=0,
-        right=1,
-        bottom=0,
-        top=1
+    _canvas = FigureCanvasAgg(_fig)
+
+    _ax = _fig.add_axes(
+        [0, 0, 1, 1]
     )
 
     _ax.set_xlim(0, width)
     _ax.set_ylim(height, 0)
+
     _ax.set_aspect("equal")
     _ax.axis("off")
 
-    _set_background(_ax, "white")
+    _ax.patch.set_facecolor("white")
+    _fig.patch.set_facecolor("white")
 
-    if hasattr(_fig.patch, "set_facecolor"):
-        _fig.patch.set_facecolor("white")
-
+    _mark_dirty()
 
 
 def background(c):
+
     color = _color(c)
 
-    _set_background(_ax, color)
+    _ax.patch.set_facecolor(color)
+    _fig.patch.set_facecolor(color)
 
-    if hasattr(_fig.patch, "set_facecolor"):
-        _fig.patch.set_facecolor(color)
-
+    _mark_dirty()
 
 
 def stroke(c):
+
     global _stroke
+
     _stroke = _color(c)
 
 
 def noStroke():
+
     global _stroke
+
     _stroke = None
 
 
 def fill(c):
+
     global _fill
+
     _fill = _color(c)
 
 
 def noFill():
+
     global _fill
+
     _fill = None
 
 
 def strokeWeight(n):
+
     global _strokeWeight
+
     _strokeWeight = n
 
 
 def point(x, y):
+
     if _stroke is None:
         return
 
@@ -190,9 +249,11 @@ def point(x, y):
         zorder=_next_zorder()
     )
 
+    _mark_dirty()
 
 
 def line(x1, y1, x2, y2):
+
     if _stroke is None:
         return
 
@@ -204,9 +265,11 @@ def line(x1, y1, x2, y2):
         zorder=_next_zorder()
     )
 
+    _mark_dirty()
 
 
 def circle(x, y, d):
+
     edge = _stroke if _stroke is not None else "none"
     face = _fill if _fill is not None else "none"
 
@@ -221,8 +284,11 @@ def circle(x, y, d):
 
     _ax.add_patch(shape)
 
+    _mark_dirty()
+
 
 def ellipse(x, y, w, h):
+
     edge = _stroke if _stroke is not None else "none"
     face = _fill if _fill is not None else "none"
 
@@ -238,8 +304,11 @@ def ellipse(x, y, w, h):
 
     _ax.add_patch(shape)
 
+    _mark_dirty()
+
 
 def rect(x, y, w, h):
+
     edge = _stroke if _stroke is not None else "none"
     face = _fill if _fill is not None else "none"
 
@@ -255,17 +324,29 @@ def rect(x, y, w, h):
 
     _ax.add_patch(shape)
 
+    _mark_dirty()
+
 
 def square(x, y, s):
+
     rect(x, y, s, s)
 
 
-def triangle(x1, y1, x2, y2, x3, y3):
+def triangle(
+    x1, y1,
+    x2, y2,
+    x3, y3
+):
+
     edge = _stroke if _stroke is not None else "none"
     face = _fill if _fill is not None else "none"
 
     shape = Polygon(
-        [(x1, y1), (x2, y2), (x3, y3)],
+        [
+            (x1, y1),
+            (x2, y2),
+            (x3, y3)
+        ],
         closed=True,
         edgecolor=edge,
         facecolor=face,
@@ -275,8 +356,15 @@ def triangle(x1, y1, x2, y2, x3, y3):
 
     _ax.add_patch(shape)
 
+    _mark_dirty()
 
-def arc(x, y, w, h, start, stop):
+
+def arc(
+    x, y,
+    w, h,
+    start, stop
+):
+
     if _stroke is None:
         return
 
@@ -293,13 +381,18 @@ def arc(x, y, w, h, start, stop):
 
     _ax.add_patch(shape)
 
+    _mark_dirty()
+
 
 def textSize(n):
+
     global _textSize
+
     _textSize = n
 
 
 def text(s, x, y):
+
     color = _fill if _fill is not None else _stroke
 
     if color is None:
@@ -314,9 +407,11 @@ def text(s, x, y):
         zorder=_next_zorder()
     )
 
+    _mark_dirty()
 
 
 def random(a, b=None):
+
     if b is None:
         return rd.uniform(0, a)
 
@@ -324,29 +419,41 @@ def random(a, b=None):
 
 
 def randomSeed(seed):
+
     rd.seed(seed)
 
 
 def clear():
+
     global _zorder
 
     _ax.cla()
 
     _ax.set_xlim(0, width)
     _ax.set_ylim(height, 0)
+
     _ax.set_aspect("equal")
     _ax.axis("off")
 
-    _set_background(_ax, "white")
+    _ax.patch.set_facecolor("white")
+    _fig.patch.set_facecolor("white")
 
     _zorder = 1
 
+    _mark_dirty()
+
 
 def save(filename):
+
     if _fig is None:
         return
 
-    # Conserve exactement les dimensions définies par size().
+    if _canvas is not None:
+        try:
+            _canvas.draw()
+        except Exception:
+            pass
+
     _fig.savefig(
         filename,
         dpi=_fig.dpi
