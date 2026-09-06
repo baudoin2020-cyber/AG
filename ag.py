@@ -37,7 +37,21 @@ MAGENTA = "#FF00FF"
 
 
 # ============================================================
-# COULEURS
+# COMPATIBILITE MATPLOTLIB
+# ============================================================
+
+def _set_background(ax, color):
+    """
+    Compatible anciennes et nouvelles versions de Matplotlib.
+    """
+    if hasattr(ax, "set_facecolor"):
+        ax.set_facecolor(color)
+    elif hasattr(ax, "set_axis_bgcolor"):
+        ax.set_axis_bgcolor(color)
+
+
+# ============================================================
+# CONVERSION DES COULEURS
 # ============================================================
 
 def _color(c):
@@ -48,31 +62,37 @@ def _color(c):
 
         if len(c) == 6:
             return tuple(
-                int(c[i:i+2], 16) / 255
+                int(c[i:i+2], 16) / 255.0
                 for i in (0, 2, 4)
             )
 
         if len(c) == 3:
             return tuple(
-                int(c[i] * 2, 16) / 255
+                int(c[i] * 2, 16) / 255.0
                 for i in range(3)
             )
 
-        raise ValueError("Couleur hexadécimale invalide")
+        raise ValueError("Couleur hexadecimale invalide")
 
     if isinstance(c, (tuple, list)):
 
         if len(c) != 3:
-            raise ValueError("Une couleur RGB doit contenir 3 valeurs")
+            raise ValueError(
+                "Une couleur RGB doit contenir 3 valeurs"
+            )
 
         if max(c) <= 1:
             return tuple(c)
 
-        return tuple(v / 255 for v in c)
+        return tuple(
+            x / 255.0
+            for x in c
+        )
 
     if isinstance(c, (int, float)):
 
-        v = c / 255
+        v = c / 255.0
+
         return (v, v, v)
 
     raise ValueError("Couleur inconnue")
@@ -109,14 +129,16 @@ def size(w, h):
 
     plt.close("all")
 
-    ratio = w / h
+    ratio = float(w) / float(h)
 
     if ratio >= 1:
         figsize = (8, 8 / ratio)
     else:
         figsize = (8 * ratio, 8)
 
-    _fig, _ax = plt.subplots(figsize=figsize)
+    _fig, _ax = plt.subplots(
+        figsize=figsize
+    )
 
     _ax.set_xlim(0, width)
     _ax.set_ylim(height, 0)
@@ -124,10 +146,18 @@ def size(w, h):
     _ax.set_aspect("equal")
     _ax.axis("off")
 
-    _ax.set_facecolor("white")
-    _fig.patch.set_facecolor("white")
+    _set_background(
+        _ax,
+        "white"
+    )
 
-    display(_fig)
+    if hasattr(_fig.patch, "set_facecolor"):
+        _fig.patch.set_facecolor("white")
+
+    try:
+        display(_fig)
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -138,8 +168,18 @@ def background(c):
 
     color = _color(c)
 
-    _ax.set_facecolor(color)
-    _fig.patch.set_facecolor(color)
+    _set_background(
+        _ax,
+        color
+    )
+
+    if hasattr(_fig.patch, "set_facecolor"):
+        _fig.patch.set_facecolor(color)
+
+    try:
+        _fig.canvas.draw()
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -202,7 +242,10 @@ def point(x, y):
         x,
         y,
         marker="o",
-        markersize=max(1, _strokeWeight * 2),
+        markersize=max(
+            1,
+            _strokeWeight * 2
+        ),
         color=_stroke,
         markeredgewidth=0,
         zorder=_next_zorder()
@@ -233,12 +276,21 @@ def line(x1, y1, x2, y2):
 
 def circle(x, y, d):
 
-    edge = _stroke if _stroke is not None else "none"
-    face = _fill if _fill is not None else "none"
+    edge = (
+        _stroke
+        if _stroke is not None
+        else "none"
+    )
+
+    face = (
+        _fill
+        if _fill is not None
+        else "none"
+    )
 
     shape = Circle(
         (x, y),
-        d / 2,
+        d / 2.0,
         edgecolor=edge,
         facecolor=face,
         linewidth=_strokeWeight,
@@ -254,8 +306,17 @@ def circle(x, y, d):
 
 def ellipse(x, y, w, h):
 
-    edge = _stroke if _stroke is not None else "none"
-    face = _fill if _fill is not None else "none"
+    edge = (
+        _stroke
+        if _stroke is not None
+        else "none"
+    )
+
+    face = (
+        _fill
+        if _fill is not None
+        else "none"
+    )
 
     shape = Ellipse(
         (x, y),
@@ -276,8 +337,17 @@ def ellipse(x, y, w, h):
 
 def rect(x, y, w, h):
 
-    edge = _stroke if _stroke is not None else "none"
-    face = _fill if _fill is not None else "none"
+    edge = (
+        _stroke
+        if _stroke is not None
+        else "none"
+    )
+
+    face = (
+        _fill
+        if _fill is not None
+        else "none"
+    )
 
     shape = Rectangle(
         (x, y),
@@ -298,17 +368,35 @@ def rect(x, y, w, h):
 
 def square(x, y, s):
 
-    rect(x, y, s, s)
+    rect(
+        x,
+        y,
+        s,
+        s
+    )
 
 
 # ============================================================
 # TRIANGLE
 # ============================================================
 
-def triangle(x1, y1, x2, y2, x3, y3):
+def triangle(
+    x1, y1,
+    x2, y2,
+    x3, y3
+):
 
-    edge = _stroke if _stroke is not None else "none"
-    face = _fill if _fill is not None else "none"
+    edge = (
+        _stroke
+        if _stroke is not None
+        else "none"
+    )
+
+    face = (
+        _fill
+        if _fill is not None
+        else "none"
+    )
 
     shape = Polygon(
         [
@@ -330,7 +418,11 @@ def triangle(x1, y1, x2, y2, x3, y3):
 # ARC
 # ============================================================
 
-def arc(x, y, w, h, start, stop):
+def arc(
+    x, y,
+    w, h,
+    start, stop
+):
 
     if _stroke is None:
         return
@@ -362,7 +454,11 @@ def textSize(n):
 
 def text(s, x, y):
 
-    color = _fill if _fill is not None else _stroke
+    color = (
+        _fill
+        if _fill is not None
+        else _stroke
+    )
 
     if color is None:
         color = (0, 0, 0)
@@ -384,9 +480,15 @@ def text(s, x, y):
 def random(a, b=None):
 
     if b is None:
-        return rd.uniform(0, a)
+        return rd.uniform(
+            0,
+            a
+        )
 
-    return rd.uniform(a, b)
+    return rd.uniform(
+        a,
+        b
+    )
 
 
 def randomSeed(seed):
@@ -404,11 +506,23 @@ def clear():
 
     _ax.cla()
 
-    _ax.set_xlim(0, width)
-    _ax.set_ylim(height, 0)
+    _ax.set_xlim(
+        0,
+        width
+    )
+
+    _ax.set_ylim(
+        height,
+        0
+    )
 
     _ax.set_aspect("equal")
     _ax.axis("off")
+
+    _set_background(
+        _ax,
+        "white"
+    )
 
     _zorder = 1
 
