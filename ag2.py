@@ -65,8 +65,26 @@ _state = {
 
 
 def _to_rgb(*args):
-    """Convertit 1 (gris), 3 (RGB) ou 4 (RGBA, alpha ignore) arguments 0-255
-    en tuple RGB normalise 0-1 pour matplotlib."""
+    """Convertit une couleur en tuple RGB normalise 0-1 pour matplotlib.
+    Accepte :
+    - 1 argument numerique (niveau de gris 0-255)
+    - 3 ou 4 arguments numeriques (RGB ou RGBA 0-255, alpha ignore)
+    - 1 chaine : code hexa ('#7ED321' ou '7ED321') ou nom de couleur
+      reconnu par matplotlib ('red', 'skyblue', ...)
+    """
+    if len(args) == 1 and isinstance(args[0], str):
+        s = args[0]
+        if not s.startswith("#"):
+            try:
+                import matplotlib.colors as mcolors
+                return mcolors.to_rgb(s)
+            except ValueError:
+                s = "#" + s  # on tente comme hexa sans le '#'
+        s = s.lstrip("#")
+        r = int(s[0:2], 16) / 255
+        g = int(s[2:4], 16) / 255
+        b = int(s[4:6], 16) / 255
+        return (r, g, b)
     if len(args) == 1:
         v = args[0] / 255
         return (v, v, v)
