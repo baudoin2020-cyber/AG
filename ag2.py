@@ -1,300 +1,497 @@
-"""
-processing_lite.py
--------------------
-Mini-module reprenant les noms de fonctions EXACTS de Processing (Java)
-pour les figures geometriques et les I/O de fichiers, utilisable directement
-dans un notebook Jupyter (rendu via matplotlib).
+# -*- coding: utf-8 -*-
 
-Conventions Processing :
-- Origine (0, 0) en haut a gauche du canvas.
-- Couleurs en RGB, composantes 0-255 (ou niveau de gris si un seul argument).
-- Etat courant de fill/stroke, modifie par fill()/stroke()/noFill()/noStroke().
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.patches import Circle, Ellipse, Rectangle, Polygon, Arc
+import random as rd
+import io
 
-Usage typique dans un notebook :
-
-    from processing_lite import *
-
-    size(400, 300)
-    background(240)
-    fill(255, 0, 0)
-    stroke(0)
-    rect(50, 50, 100, 80)
-    ellipse(250, 150, 120, 120)
-
-    beginShape()
-    vertex(50, 200)
-    vertex(100, 250)
-    vertex(20, 250)
-    endShape(CLOSE)
-
-Avec le backend inline de Jupyter (%matplotlib inline), la figure s'affiche
-automatiquement a la fin de la cellule.
-"""
-
-import json
-import os
-from pathlib import Path
-
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+try:
+    from IPython import get_ipython
+    from IPython.display import display, Image
+except Exception:
+    get_ipython = None
+    display = None
+    Image = None
 
 
-# ---------------------------------------------------------------------------
-# Constantes Processing utilisees ici
-# ---------------------------------------------------------------------------
+AG_VERSION = "2026-09-06-03"
 
-CLOSE = "CLOSE"
+_fig = None
+_ax = None
+_canvas = None
+_background_shape = None
 
+width = 0
+height = 0
 
-# ---------------------------------------------------------------------------
-# Etat global du canvas (comme les variables globales implicites de Processing)
-# ---------------------------------------------------------------------------
+_stroke = (0, 0, 0)
+_fill = None
+_strokeWeight = 1
+_textSize = 12
+_zorder = 1
 
-_state = {
-    "fig": None,
-    "ax": None,
-    "width": 400,
-    "height": 400,
-    "fill_color": (255, 255, 255),
-    "fill_on": True,
-    "stroke_color": (0, 0, 0),
-    "stroke_on": True,
-    "stroke_weight": 1.0,
-    "shape_points": None,  # utilise entre beginShape() et endShape()
-}
+_dirty = False
+_hook_registered = False
 
 
-def _to_rgb(*args):
-    """Convertit une couleur en tuple RGB normalise 0-1 pour matplotlib.
-    Accepte :
-    - 1 argument numerique (niveau de gris 0-255)
-    - 3 ou 4 arguments numeriques (RGB ou RGBA 0-255, alpha ignore)
-    - 1 chaine : code hexa ('#7ED321' ou '7ED321') ou nom de couleur
-      reconnu par matplotlib ('red', 'skyblue', ...)
-    """
-    if len(args) == 1 and isinstance(args[0], str):
-        s = args[0]
-        if not s.startswith("#"):
-            try:
-                import matplotlib.colors as mcolors
-                return mcolors.to_rgb(s)
-            except ValueError:
-                s = "#" + s  # on tente comme hexa sans le '#'
-        s = s.lstrip("#")
-        r = int(s[0:2], 16) / 255
-        g = int(s[2:4], 16) / 255
-        b = int(s[4:6], 16) / 255
-        return (r, g, b)
-    if len(args) == 1:
-        v = args[0] / 255
+BLACK = "#000000"
+WHITE = "#FFFFFF"
+RED = "#FF0000"
+GREEN = "#00FF00"
+BLUE = "#0000FF"
+YELLOW = "#FFFF00"
+CYAN = "#00FFFF"
+MAGENTA = "#FF00FF"
+
+
+def _color(c):
+
+    if isinstance(c, str):
+
+        c = c.strip().lstrip("#")
+
+        if len(c) == 6:
+            return tuple(
+                int(c[i:i+2], 16) / 255.0
+                for i in (0, 2, 4)
+            )
+
+        if len(c) == 3:
+            return tuple(
+                int(c[i] * 2, 16) / 255.0
+                for i in range(3)
+            )
+
+        raise ValueError("Couleur hexadecimale invalide")
+
+    if isinstance(c, (tuple, list)):
+
+        if len(c) != 3:
+            raise ValueError("Une couleur RGB doit contenir 3 valeurs")
+
+        if max(c) <= 1:
+            return tuple(c)
+
+        return tuple(x / 255.0 for x in c)
+
+    if isinstance(c, (int, float)):
+
+        v = c / 255.0
         return (v, v, v)
-    r, g, b = args[0] / 255, args[1] / 255, args[2] / 255
-    return (r, g, b)
+
+    raise ValueError("Couleur inconnue")
 
 
-def _face_edge():
-    face = _state["fill_color"] if _state["fill_on"] else "none"
-    edge = _state["stroke_color"] if _state["stroke_on"] else "none"
-    lw = _state["stroke_weight"] if _state["stroke_on"] else 0
-    return face, edge, lw
+def _next_zorder():
+
+    global _zorder
+
+    z = _zorder
+    _zorder += 1
+
+    return z
 
 
-# ---------------------------------------------------------------------------
-# Cycle de vie du canvas : size(), background(), save()
-# ---------------------------------------------------------------------------
+def _mark_dirty():
 
-def size(width=400, height=400):
-    """Definit la taille du canvas (equivalent de size() appele dans setup())."""
-    _state["width"] = width
-    _state["height"] = height
-    fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
-    ax.set_xlim(0, width)
-    ax.set_ylim(height, 0)  # y croit vers le bas, comme dans Processing
-    ax.set_aspect("equal")
-    ax.axis("off")
-    _state["fig"] = fig
-    _state["ax"] = ax
-    return fig, ax
+    global _dirty
+
+    _dirty = True
 
 
-def background(*args):
-    """Remplit tout le canvas d'une couleur."""
-    ax = _state["ax"]
-    color = _to_rgb(*args)
-    ax.add_patch(patches.Rectangle(
-        (0, 0), _state["width"], _state["height"], facecolor=color, edgecolor=None, zorder=0
-    ))
+def _png_bytes():
+
+    if _fig is None:
+        return None
+
+    if _canvas is not None:
+        _canvas.draw()
+
+    buffer = io.BytesIO()
+
+    _fig.savefig(
+        buffer,
+        format="png",
+        dpi=_fig.dpi,
+        facecolor=_fig.get_facecolor()
+    )
+
+    return buffer.getvalue()
 
 
-def save(filename):
-    """Sauvegarde le canvas courant dans un fichier image (png, svg, ...)."""
-    _state["fig"].savefig(filename, bbox_inches="tight", pad_inches=0)
+def _display_once(*args, **kwargs):
+
+    global _dirty
+
+    if not _dirty:
+        return
+
+    if _fig is None:
+        return
+
+    if display is None or Image is None:
+        return
+
+    try:
+        data = _png_bytes()
+        if data is not None:
+            display(Image(data=data))
+            _dirty = False
+    except Exception:
+        pass
 
 
-# ---------------------------------------------------------------------------
-# Etat de style : fill(), noFill(), stroke(), noStroke(), strokeWeight()
-# ---------------------------------------------------------------------------
+def _register_hook():
 
-def fill(*args):
-    """Definit la couleur de remplissage des formes suivantes."""
-    _state["fill_color"] = _to_rgb(*args)
-    _state["fill_on"] = True
+    global _hook_registered
+
+    if _hook_registered:
+        return
+
+    if get_ipython is None:
+        return
+
+    try:
+        ip = get_ipython()
+
+        if ip is not None and hasattr(ip, "events"):
+            ip.events.register(
+                "post_run_cell",
+                _display_once
+            )
+
+            _hook_registered = True
+
+    except Exception:
+        pass
 
 
-def noFill():
-    """Desactive le remplissage des formes suivantes."""
-    _state["fill_on"] = False
+_register_hook()
 
 
-def stroke(*args):
-    """Definit la couleur de contour des formes suivantes."""
-    _state["stroke_color"] = _to_rgb(*args)
-    _state["stroke_on"] = True
+
+def _make_background(color):
+    global _background_shape
+
+    if _background_shape is not None:
+        try:
+            _background_shape.remove()
+        except Exception:
+            pass
+
+    _background_shape = Rectangle(
+        (0, 0),
+        width,
+        height,
+        facecolor=color,
+        edgecolor="none",
+        linewidth=0,
+        zorder=-1000000
+    )
+    _ax.add_patch(_background_shape)
+
+
+def size(w, h):
+
+    global _fig, _ax, _canvas, _background_shape
+    global width, height
+    global _zorder
+
+    width = w
+    height = h
+    _background_shape = None
+    _zorder = 1
+
+    dpi = 100.0
+
+    _fig = Figure(
+        figsize=(
+            float(w) / dpi,
+            float(h) / dpi
+        ),
+        dpi=dpi
+    )
+
+    _canvas = FigureCanvasAgg(_fig)
+
+    _ax = _fig.add_axes(
+        [0, 0, 1, 1]
+    )
+
+    _ax.set_xlim(0, width)
+    _ax.set_ylim(height, 0)
+
+    _ax.set_aspect("equal")
+    _ax.axis("off")
+
+    _ax.patch.set_facecolor("white")
+    _fig.patch.set_facecolor("white")
+    _make_background((1.0, 1.0, 1.0))
+
+    _mark_dirty()
+
+
+def background(c):
+
+    color = _color(c)
+
+    _fig.patch.set_facecolor(color)
+    _ax.patch.set_facecolor(color)
+    _make_background(color)
+
+    _mark_dirty()
+
+
+def stroke(c):
+
+    global _stroke
+
+    _stroke = _color(c)
 
 
 def noStroke():
-    """Desactive le contour des formes suivantes."""
-    _state["stroke_on"] = False
+
+    global _stroke
+
+    _stroke = None
 
 
-def strokeWeight(w):
-    """Definit l'epaisseur du contour."""
-    _state["stroke_weight"] = w
+def fill(c):
+
+    global _fill
+
+    _fill = _color(c)
 
 
-# ---------------------------------------------------------------------------
-# Formes geometriques : point, line, triangle, quad, rect, ellipse, circle, arc
-# ---------------------------------------------------------------------------
+def noFill():
+
+    global _fill
+
+    _fill = None
+
+
+def strokeWeight(n):
+
+    global _strokeWeight
+
+    _strokeWeight = n
+
 
 def point(x, y):
-    """Dessine un point en (x, y)."""
-    ax = _state["ax"]
-    color = _state["stroke_color"] if _state["stroke_on"] else _state["fill_color"]
-    ax.plot([x], [y], marker="o", markersize=max(1, _state["stroke_weight"] * 2), color=color)
+
+    if _stroke is None:
+        return
+
+    _ax.plot(
+        x,
+        y,
+        marker="o",
+        markersize=max(1, _strokeWeight * 2),
+        color=_stroke,
+        markeredgewidth=0,
+        zorder=_next_zorder()
+    )
+
+    _mark_dirty()
 
 
 def line(x1, y1, x2, y2):
-    """Dessine une ligne entre (x1, y1) et (x2, y2)."""
-    ax = _state["ax"]
-    color = _state["stroke_color"] if _state["stroke_on"] else _state["fill_color"]
-    ax.plot([x1, x2], [y1, y2], color=color, linewidth=_state["stroke_weight"])
 
+    if _stroke is None:
+        return
 
-def triangle(x1, y1, x2, y2, x3, y3):
-    """Dessine un triangle a partir de ses 3 sommets."""
-    ax = _state["ax"]
-    face, edge, lw = _face_edge()
-    ax.add_patch(patches.Polygon(
-        [(x1, y1), (x2, y2), (x3, y3)], closed=True, facecolor=face, edgecolor=edge, linewidth=lw
-    ))
+    _ax.plot(
+        [x1, x2],
+        [y1, y2],
+        color=_stroke,
+        linewidth=_strokeWeight,
+        zorder=_next_zorder()
+    )
 
-
-def quad(x1, y1, x2, y2, x3, y3, x4, y4):
-    """Dessine un quadrilatere a partir de ses 4 sommets."""
-    ax = _state["ax"]
-    face, edge, lw = _face_edge()
-    ax.add_patch(patches.Polygon(
-        [(x1, y1), (x2, y2), (x3, y3), (x4, y4)], closed=True,
-        facecolor=face, edgecolor=edge, linewidth=lw
-    ))
-
-
-def rect(x, y, w, h):
-    """Dessine un rectangle : coin haut-gauche (x, y), largeur w, hauteur h."""
-    ax = _state["ax"]
-    face, edge, lw = _face_edge()
-    ax.add_patch(patches.Rectangle((x, y), w, h, facecolor=face, edgecolor=edge, linewidth=lw))
-
-
-def ellipse(x, y, w, h):
-    """Dessine une ellipse centree en (x, y), de largeur w et hauteur h."""
-    ax = _state["ax"]
-    face, edge, lw = _face_edge()
-    ax.add_patch(patches.Ellipse((x, y), w, h, facecolor=face, edgecolor=edge, linewidth=lw))
+    _mark_dirty()
 
 
 def circle(x, y, d):
-    """Dessine un cercle centre en (x, y) de diametre d."""
-    ellipse(x, y, d, d)
+
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
+
+    shape = Circle(
+        (x, y),
+        d / 2.0,
+        edgecolor=edge,
+        facecolor=face,
+        linewidth=_strokeWeight,
+        zorder=_next_zorder()
+    )
+
+    _ax.add_patch(shape)
+    _mark_dirty()
 
 
-def arc(x, y, w, h, start, stop):
-    """Dessine un arc dans l'ellipse englobante (x, y, w, h), entre les angles
-    start et stop en radians (comme en Processing)."""
-    import math
-    ax = _state["ax"]
-    face, edge, lw = _face_edge()
-    ax.add_patch(patches.Arc(
-        (x, y), w, h, theta1=math.degrees(start), theta2=math.degrees(stop),
-        edgecolor=edge if edge != "none" else _state["fill_color"], linewidth=lw or 1
-    ))
+def ellipse(x, y, w, h):
+
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
+
+    shape = Ellipse(
+        (x, y),
+        w,
+        h,
+        edgecolor=edge,
+        facecolor=face,
+        linewidth=_strokeWeight,
+        zorder=_next_zorder()
+    )
+
+    _ax.add_patch(shape)
+    _mark_dirty()
 
 
-# ---------------------------------------------------------------------------
-# Polygones libres : beginShape(), vertex(), endShape()
-# ---------------------------------------------------------------------------
+def rect(x, y, w, h):
 
-def beginShape():
-    """Demarre la definition d'une forme libre (polygone)."""
-    _state["shape_points"] = []
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
 
+    shape = Rectangle(
+        (x, y),
+        w,
+        h,
+        edgecolor=edge,
+        facecolor=face,
+        linewidth=_strokeWeight,
+        zorder=_next_zorder()
+    )
 
-def vertex(x, y):
-    """Ajoute un sommet a la forme en cours (entre beginShape() et endShape())."""
-    if _state["shape_points"] is None:
-        raise RuntimeError("vertex() doit etre appele entre beginShape() et endShape()")
-    _state["shape_points"].append((x, y))
-
-
-def endShape(mode=None):
-    """Termine et dessine la forme libre. mode=CLOSE ferme le contour, comme
-    en Processing."""
-    ax = _state["ax"]
-    points = _state["shape_points"] or []
-    closed = (mode == CLOSE)
-    face, edge, lw = _face_edge()
-    if closed:
-        ax.add_patch(patches.Polygon(points, closed=True, facecolor=face, edgecolor=edge, linewidth=lw))
-    else:
-        xs, ys = zip(*points) if points else ([], [])
-        ax.plot(xs, ys, color=edge if edge != "none" else _state["fill_color"], linewidth=lw or 1)
-    _state["shape_points"] = None
+    _ax.add_patch(shape)
+    _mark_dirty()
 
 
-# ---------------------------------------------------------------------------
-# I/O fichiers : loadStrings, saveStrings, loadJSONObject, saveJSONObject, listFiles
-# ---------------------------------------------------------------------------
+def square(x, y, s):
 
-def loadStrings(filename):
-    """Lit un fichier texte et renvoie une liste de lignes (sans \\n)."""
-    with open(filename, "r", encoding="utf-8") as f:
-        return [line.rstrip("\n") for line in f]
+    rect(x, y, s, s)
 
 
-def saveStrings(filename, strings):
-    """Ecrit une liste de chaines dans un fichier texte, une par ligne."""
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write("\n".join(strings))
+def triangle(
+    x1, y1,
+    x2, y2,
+    x3, y3
+):
+
+    edge = _stroke if _stroke is not None else "none"
+    face = _fill if _fill is not None else "none"
+
+    shape = Polygon(
+        [
+            (x1, y1),
+            (x2, y2),
+            (x3, y3)
+        ],
+        closed=True,
+        edgecolor=edge,
+        facecolor=face,
+        linewidth=_strokeWeight,
+        zorder=_next_zorder()
+    )
+
+    _ax.add_patch(shape)
+    _mark_dirty()
 
 
-def loadJSONObject(filename):
-    """Charge un fichier JSON et renvoie un dict Python."""
-    with open(filename, "r", encoding="utf-8") as f:
-        return json.load(f)
+def arc(
+    x, y,
+    w, h,
+    start, stop
+):
+
+    if _stroke is None:
+        return
+
+    shape = Arc(
+        (x, y),
+        w,
+        h,
+        theta1=start,
+        theta2=stop,
+        color=_stroke,
+        linewidth=_strokeWeight,
+        zorder=_next_zorder()
+    )
+
+    _ax.add_patch(shape)
+    _mark_dirty()
 
 
-def saveJSONObject(json_obj, filename, indent=2):
-    """Sauvegarde un objet Python dans un fichier JSON.
-    Ordre des arguments (json_obj, filename) conforme a Processing."""
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(json_obj, f, indent=indent, ensure_ascii=False)
+def textSize(n):
+
+    global _textSize
+
+    _textSize = n
 
 
-def listFiles(path, extension=None):
-    """Liste les fichiers d'un dossier, filtres par extension si precisee
-    (ex: extension='.txt')."""
-    p = Path(path)
-    files = [str(f) for f in p.iterdir() if f.is_file()]
-    if extension:
-        files = [f for f in files if f.endswith(extension)]
-    return sorted(files)
+def text(s, x, y):
+
+    color = _fill if _fill is not None else _stroke
+
+    if color is None:
+        color = (0, 0, 0)
+
+    _ax.text(
+        x,
+        y,
+        str(s),
+        fontsize=_textSize,
+        color=color,
+        zorder=_next_zorder()
+    )
+
+    _mark_dirty()
+
+
+def random(a, b=None):
+
+    if b is None:
+        return rd.uniform(0, a)
+
+    return rd.uniform(a, b)
+
+
+def randomSeed(seed):
+
+    rd.seed(seed)
+
+
+def clear():
+
+    global _zorder
+
+    _ax.cla()
+
+    _ax.set_xlim(0, width)
+    _ax.set_ylim(height, 0)
+
+    _ax.set_aspect("equal")
+    _ax.axis("off")
+
+    _ax.patch.set_facecolor("white")
+    _fig.patch.set_facecolor("white")
+
+    _zorder = 1
+
+    _mark_dirty()
+
+
+def save(filename):
+
+    if _fig is None:
+        return
+
+    if _canvas is not None:
+        _canvas.draw()
+
+    _fig.savefig(
+        filename,
+        dpi=_fig.dpi,
+        facecolor=_fig.get_facecolor()
+    )
