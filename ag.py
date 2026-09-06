@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
 
-AG_VERSION = "2026-09-06-01"
-
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.patches import Circle, Ellipse, Rectangle, Polygon, Arc
 import random as rd
+import io
 
 try:
     from IPython import get_ipython
-    from IPython.display import display, clear_output
+    from IPython.display import display, Image
 except Exception:
     get_ipython = None
     display = None
-    clear_output = None
+    Image = None
 
+
+AG_VERSION = "2026-09-06-02"
 
 _fig = None
 _ax = None
@@ -98,6 +99,25 @@ def _mark_dirty():
     _dirty = True
 
 
+def _png_bytes():
+
+    if _fig is None:
+        return None
+
+    if _canvas is not None:
+        _canvas.draw()
+
+    buffer = io.BytesIO()
+
+    _fig.savefig(
+        buffer,
+        format="png",
+        dpi=_fig.dpi
+    )
+
+    return buffer.getvalue()
+
+
 def _display_once(*args, **kwargs):
 
     global _dirty
@@ -108,21 +128,16 @@ def _display_once(*args, **kwargs):
     if _fig is None:
         return
 
-    if display is None:
+    if display is None or Image is None:
         return
 
     try:
-        if _canvas is not None:
-            _canvas.draw()
+        data = _png_bytes()
+        if data is not None:
+            display(Image(data=data))
+            _dirty = False
     except Exception:
         pass
-
-    try:
-        display(_fig)
-    except Exception:
-        pass
-
-    _dirty = False
 
 
 def _register_hook():
@@ -285,7 +300,6 @@ def circle(x, y, d):
     )
 
     _ax.add_patch(shape)
-
     _mark_dirty()
 
 
@@ -305,7 +319,6 @@ def ellipse(x, y, w, h):
     )
 
     _ax.add_patch(shape)
-
     _mark_dirty()
 
 
@@ -325,7 +338,6 @@ def rect(x, y, w, h):
     )
 
     _ax.add_patch(shape)
-
     _mark_dirty()
 
 
@@ -357,7 +369,6 @@ def triangle(
     )
 
     _ax.add_patch(shape)
-
     _mark_dirty()
 
 
@@ -382,7 +393,6 @@ def arc(
     )
 
     _ax.add_patch(shape)
-
     _mark_dirty()
 
 
@@ -451,10 +461,7 @@ def save(filename):
         return
 
     if _canvas is not None:
-        try:
-            _canvas.draw()
-        except Exception:
-            pass
+        _canvas.draw()
 
     _fig.savefig(
         filename,
