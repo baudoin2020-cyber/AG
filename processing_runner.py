@@ -4,8 +4,7 @@ from pathlib import Path
 # ============================================================
 # PROCESSING JAVA -> PROCESSING PYTHON
 # ============================================================
-def dist(x1, y1, x2, y2):
-    return ((x2-x1)**2 + (y2-y1)**2)**0.5
+
     
 def convert_processing_text(code):
 
