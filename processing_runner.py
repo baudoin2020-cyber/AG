@@ -1,11 +1,12 @@
 import re
 from pathlib import Path
 
+PROCESSING_RUNNER_VERSION = "2026-09-06-01"
+
 # ============================================================
 # PROCESSING JAVA -> PROCESSING PYTHON
 # ============================================================
 
-    
 def convert_processing_text(code):
 
     warnings = []
@@ -478,7 +479,7 @@ def convert_and_run_and_save_image(code_java, nom_image):
         "fill", "noFill", "strokeWeight", "point",
         "line", "circle", "ellipse", "rect", "square",
         "triangle", "arc", "textSize", "text",
-        "random", "randomSeed", "clear"
+        "random", "randomSeed", "clear", "dist"
     )
 
     for nom_fonction in fonctions_ag2:
@@ -493,7 +494,11 @@ def convert_and_run_and_save_image(code_java, nom_image):
         )
 
     code_python = (
-        "import ag2\n\n"
+        "import ag2\n"
+        "if not hasattr(ag2, 'dist'):\n"
+        "    def _dist(x1, y1, x2, y2):\n"
+        "        return ((x2-x1)**2 + (y2-y1)**2)**0.5\n"
+        "    ag2.dist = _dist\n\n"
         + code_python
     )
 
