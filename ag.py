@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+AG_VERSION = "2026-09-06-01"
+
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.patches import Circle, Ellipse, Rectangle, Polygon, Arc
