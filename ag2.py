@@ -15,7 +15,7 @@ except Exception:
     Image = None
 
 
-AG_VERSION = "2026-09-06-03"
+AG_VERSION = "2026-10-28-01"
 
 _fig = None
 _ax = None
@@ -30,6 +30,9 @@ _fill = None
 _strokeWeight = 1
 _textSize = 12
 _zorder = 1
+
+_scaleX = 1.0
+_scaleY = 1.0
 
 _dirty = False
 _hook_registered = False
@@ -91,6 +94,22 @@ def _next_zorder():
     _zorder += 1
 
     return z
+
+
+def _sx(v):
+
+    return v * _scaleX
+
+
+def _sy(v):
+
+    return v * _scaleY
+
+
+def _sw():
+
+    # Comme en Processing, l'epaisseur du contour suit l'echelle
+    return _strokeWeight * (_scaleX + _scaleY) / 2.0
 
 
 def _mark_dirty():
@@ -197,11 +216,14 @@ def size(w, h):
     global _fig, _ax, _canvas, _background_shape
     global width, height
     global _zorder
+    global _scaleX, _scaleY
 
     width = w
     height = h
     _background_shape = None
     _zorder = 1
+    _scaleX = 1.0
+    _scaleY = 1.0
 
     dpi = 100.0
 
@@ -278,16 +300,32 @@ def strokeWeight(n):
     _strokeWeight = n
 
 
+def scale(s, t=None):
+
+    # scale(s)    : meme facteur en x et en y
+    # scale(sx, sy) : facteurs differents
+    # Cumulatif, comme en Processing : scale(2) puis scale(3) -> echelle 6.
+    # size() remet l'echelle a 1.
+
+    global _scaleX, _scaleY
+
+    if t is None:
+        t = s
+
+    _scaleX *= s
+    _scaleY *= t
+
+
 def point(x, y):
 
     if _stroke is None:
         return
 
     _ax.plot(
-        x,
-        y,
+        _sx(x),
+        _sy(y),
         marker="o",
-        markersize=max(1, _strokeWeight * 2),
+        markersize=max(1, _sw() * 2),
         color=_stroke,
         markeredgewidth=0,
         zorder=_next_zorder()
@@ -302,10 +340,10 @@ def line(x1, y1, x2, y2):
         return
 
     _ax.plot(
-        [x1, x2],
-        [y1, y2],
+        [_sx(x1), _sx(x2)],
+        [_sy(y1), _sy(y2)],
         color=_stroke,
-        linewidth=_strokeWeight,
+        linewidth=_sw(),
         zorder=_next_zorder()
     )
 
@@ -317,14 +355,26 @@ def circle(x, y, d):
     edge = _stroke if _stroke is not None else "none"
     face = _fill if _fill is not None else "none"
 
-    shape = Circle(
-        (x, y),
-        d / 2.0,
-        edgecolor=edge,
-        facecolor=face,
-        linewidth=_strokeWeight,
-        zorder=_next_zorder()
-    )
+    if _scaleX == _scaleY:
+        shape = Circle(
+            (_sx(x), _sy(y)),
+            _sx(d) / 2.0,
+            edgecolor=edge,
+            facecolor=face,
+            linewidth=_sw(),
+            zorder=_next_zorder()
+        )
+    else:
+        # echelle non uniforme : le cercle devient une ellipse
+        shape = Ellipse(
+            (_sx(x), _sy(y)),
+            _sx(d),
+            _sy(d),
+            edgecolor=edge,
+            facecolor=face,
+            linewidth=_sw(),
+            zorder=_next_zorder()
+        )
 
     _ax.add_patch(shape)
     _mark_dirty()
@@ -336,12 +386,12 @@ def ellipse(x, y, w, h):
     face = _fill if _fill is not None else "none"
 
     shape = Ellipse(
-        (x, y),
-        w,
-        h,
+        (_sx(x), _sy(y)),
+        _sx(w),
+        _sy(h),
         edgecolor=edge,
         facecolor=face,
-        linewidth=_strokeWeight,
+        linewidth=_sw(),
         zorder=_next_zorder()
     )
 
@@ -355,12 +405,12 @@ def rect(x, y, w, h):
     face = _fill if _fill is not None else "none"
 
     shape = Rectangle(
-        (x, y),
-        w,
-        h,
+        (_sx(x), _sy(y)),
+        _sx(w),
+        _sy(h),
         edgecolor=edge,
         facecolor=face,
-        linewidth=_strokeWeight,
+        linewidth=_sw(),
         zorder=_next_zorder()
     )
 
@@ -384,14 +434,14 @@ def triangle(
 
     shape = Polygon(
         [
-            (x1, y1),
-            (x2, y2),
-            (x3, y3)
+            (_sx(x1), _sy(y1)),
+            (_sx(x2), _sy(y2)),
+            (_sx(x3), _sy(y3))
         ],
         closed=True,
         edgecolor=edge,
         facecolor=face,
-        linewidth=_strokeWeight,
+        linewidth=_sw(),
         zorder=_next_zorder()
     )
 
@@ -409,13 +459,13 @@ def arc(
         return
 
     shape = Arc(
-        (x, y),
-        w,
-        h,
+        (_sx(x), _sy(y)),
+        _sx(w),
+        _sy(h),
         theta1=start,
         theta2=stop,
         color=_stroke,
-        linewidth=_strokeWeight,
+        linewidth=_sw(),
         zorder=_next_zorder()
     )
 
@@ -438,10 +488,10 @@ def text(s, x, y):
         color = (0, 0, 0)
 
     _ax.text(
-        x,
-        y,
+        _sx(x),
+        _sy(y),
         str(s),
-        fontsize=_textSize,
+        fontsize=_textSize * (_scaleX + _scaleY) / 2.0,
         color=color,
         zorder=_next_zorder()
     )
