@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-PROCESSING_RUNNER_VERSION = "2026-11-04-02"
+PROCESSING_RUNNER_VERSION = "2026-11-04-03"
 
 # ============================================================
 # PROCESSING JAVA -> PROCESSING PYTHON
@@ -557,11 +557,18 @@ def _appliquer_palette_python(code_python, valeurs):
     return "\n".join(lignes) + "\n"
 
 
-def _code_java_propre(code_java, palette):
+def _code_java_propre(code_java, palette, gris=False):
     """
-    Version .pde valide pour Processing : couleurs de la palette
-    declarees en 'color NOM = #RRGGBB;' et couleurs sans guillemets.
+    Version .pde valide pour Processing.
+    Couleur : palette declaree en 'color NOM = #RRGGBB;', couleurs
+              sans guillemets.
+    Gris    : palette declaree en 'color NOM = color(g);' et couleurs
+              ecrites en dur remplacees par color(g).
     """
+
+    def valeur(nom):
+        coul, g = palette[nom]
+        return "color(" + str(g) + ")" if gris else coul
 
     lignes = code_java.strip("\n").splitlines()
     trouves = set()
@@ -574,13 +581,13 @@ def _code_java_propre(code_java, palette):
         if m and m.group(2) in palette:
             lignes[i] = (
                 m.group(1) + "color " + m.group(2)
-                + " = " + palette[m.group(2)][0] + ";"
+                + " = " + valeur(m.group(2)) + ";"
             )
             trouves.add(m.group(2))
 
     manquants = [
-        "color " + nom + " = " + coul + ";"
-        for nom, (coul, _) in palette.items()
+        "color " + nom + " = " + valeur(nom) + ";"
+        for nom in palette
         if nom not in trouves
         and re.search(r"\b" + nom + r"\b", code_java)
     ]
@@ -592,6 +599,14 @@ def _code_java_propre(code_java, palette):
 
     # '#DFEAF7' -> #DFEAF7 (syntaxe Processing)
     code = re.sub(r"['\"](#[0-9A-Fa-f]{6})['\"]", r"\1", code)
+
+    if gris:
+        # #DAAB3A -> color(g), d'apres la luminance
+        code = re.sub(
+            r"(?<![\w#])(#[0-9A-Fa-f]{6})\b",
+            lambda m: "color(" + str(_gris_depuis_hex(m.group(1))) + ")",
+            code
+        )
 
     return code
 
@@ -703,8 +718,11 @@ def convert_and_run_and_save_image(
         images/<nom>.png         dessin en couleur
         images_gris/<nom>.png    dessin en niveaux de gris
                                  (si niveaux_de_gris=True)
-        code_java/<nom>.pde      code Processing Java
-        code_python/<nom>.py     code Processing Python
+        code_java/<nom>.pde          code Processing Java (couleur)
+        code_python/<nom>.py         code Processing Python (couleur)
+        code_java_gris/<nom>.pde     code Java en niveaux de gris
+        code_python_gris/<nom>.py    code Python en niveaux de gris
+                                     (si niveaux_de_gris=True)
 
     palette : {nom: (couleur, gris en %)} ; par defaut celle
               fixee avec definir_palette().
@@ -750,11 +768,13 @@ def convert_and_run_and_save_image(
             ("gris", "images_gris"),
             ("java", "code_java"),
             ("python", "code_python"),
+            ("java_gris", "code_java_gris"),
+            ("python_gris", "code_python_gris"),
         )
     }
 
     for cle, dossier in dossiers.items():
-        if cle == "gris" and not niveaux_de_gris:
+        if cle.endswith("gris") and not niveaux_de_gris:
             continue
         if not os.path.isdir(dossier):
             os.makedirs(dossier)
@@ -767,6 +787,12 @@ def convert_and_run_and_save_image(
 
     if niveaux_de_gris:
         chemins["gris"] = os.path.join(dossiers["gris"], nom_image)
+        chemins["java_gris"] = os.path.join(
+            dossiers["java_gris"], nom_base + ".pde"
+        )
+        chemins["python_gris"] = os.path.join(
+            dossiers["python_gris"], nom_base + ".py"
+        )
 
     # --- Conversion -------------------------------------------------
 
@@ -810,6 +836,12 @@ def convert_and_run_and_save_image(
             code_python_gris
         )
 
+        with open(chemins["java_gris"], "w", encoding="utf-8") as f:
+            f.write(_code_java_propre(code_java, palette, gris=True))
+
+        with open(chemins["python_gris"], "w", encoding="utf-8") as f:
+            f.write(code_python_gris)
+
         _executer_et_enregistrer(
             code_python_gris,
             chemins["gris"],
@@ -841,5 +873,8 @@ def convert_and_run_and_save_image(
         print("Image gris    : " + chemins["gris"])
     print("Code Java     : " + chemins["java"])
     print("Code Python   : " + chemins["python"])
+    if niveaux_de_gris:
+        print("Java gris     : " + chemins["java_gris"])
+        print("Python gris   : " + chemins["python_gris"])
 
     return chemins
