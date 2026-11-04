@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-PROCESSING_RUNNER_VERSION = "2026-11-04-03"
+PROCESSING_RUNNER_VERSION = "2026-11-04-04"
 
 # ============================================================
 # PROCESSING JAVA -> PROCESSING PYTHON
@@ -420,12 +420,15 @@ def convert_folder(folder="."):
 # Dans le notebook :
 #
 #     PALETTE = {
-#         # nom utilise dans le code Java : (couleur, gris en %)
-#         "BLEU_CLAIR": ("#DFEAF7", "15%"),   # fond
-#         "BLEU":       ("#003366", "70%"),   # remplissage
-#         "ORANGE":     ("#FF7A00", "50%"),   # trait 1
-#         "VERT":       ("#7ED321", "30%"),   # trait 2
+#         # nom dans le code Java : (couleur, gris en %, nom en gris)
+#         "BLEU_CLAIR": ("#DFEAF7", "15%", "FOND"),
+#         "BLEU":       ("#003366", "70%", "REMPLISSAGE"),
+#         "ORANGE":     ("#FF7A00", "50%", "TRAIT1"),
+#         "VERT":       ("#7ED321", "30%", "TRAIT2"),
 #     }
+#
+# Le 3e element (facultatif) est le nom de la variable dans les codes
+# en niveaux de gris ; sans lui, le nom d'origine est garde.
 #     definir_palette(PALETTE)
 #
 # Les noms de la palette remplacent les declarations du code Java
@@ -458,13 +461,19 @@ def _verifier_palette(palette):
                 "Nom de couleur invalide : " + repr(nom)
             )
 
-        if not isinstance(valeur, (tuple, list)) or len(valeur) != 2:
+        if not isinstance(valeur, (tuple, list)) or len(valeur) not in (2, 3):
             raise ValueError(
-                nom + " : il faut un couple (couleur, niveau de gris), "
-                "par exemple ('#003366', 40)."
+                nom + " : il faut (couleur, gris en %, nom en gris), "
+                "par exemple ('#003366', '70%', 'REMPLISSAGE')."
             )
 
-        couleur, gris = valeur
+        couleur, gris = valeur[0], valeur[1]
+        nom_gris = valeur[2] if len(valeur) == 3 else nom
+
+        if not re.fullmatch(r"[A-Za-z_]\w*", str(nom_gris)):
+            raise ValueError(
+                nom + " : nom en gris invalide " + repr(nom_gris)
+            )
         couleur = str(couleur).strip()
 
         if not couleur.startswith("#"):
@@ -494,7 +503,11 @@ def _verifier_palette(palette):
                 + "% (valeur donnee : " + str(valeur[1]) + ")."
             )
 
-        propre[nom] = (couleur.upper(), _gris_vers_255(gris))
+        propre[nom] = (couleur.upper(), _gris_vers_255(gris), nom_gris)
+
+    noms_gris = [v[2] for v in propre.values()]
+    if len(set(noms_gris)) != len(noms_gris):
+        raise ValueError("Deux couleurs ont le meme nom en gris.")
 
     return propre
 
@@ -562,13 +575,15 @@ def _code_java_propre(code_java, palette, gris=False):
     Version .pde valide pour Processing.
     Couleur : palette declaree en 'color NOM = #RRGGBB;', couleurs
               sans guillemets.
-    Gris    : palette declaree en 'color NOM = color(g);' et couleurs
-              ecrites en dur remplacees par color(g).
+    Gris    : palette declaree en 'int FOND = 217;' (nom en gris) et
+              couleurs ecrites en dur remplacees par leur niveau (0-255).
     """
 
+    type_couleur = "int" if gris else "color"
+
     def valeur(nom):
-        coul, g = palette[nom]
-        return "color(" + str(g) + ")" if gris else coul
+        coul, g, _ = palette[nom]
+        return str(g) if gris else coul
 
     lignes = code_java.strip("\n").splitlines()
     trouves = set()
@@ -580,13 +595,13 @@ def _code_java_propre(code_java, palette, gris=False):
         )
         if m and m.group(2) in palette:
             lignes[i] = (
-                m.group(1) + "color " + m.group(2)
+                m.group(1) + type_couleur + " " + m.group(2)
                 + " = " + valeur(m.group(2)) + ";"
             )
             trouves.add(m.group(2))
 
     manquants = [
-        "color " + nom + " = " + valeur(nom) + ";"
+        type_couleur + " " + nom + " = " + valeur(nom) + ";"
         for nom in palette
         if nom not in trouves
         and re.search(r"\b" + nom + r"\b", code_java)
@@ -601,14 +616,26 @@ def _code_java_propre(code_java, palette, gris=False):
     code = re.sub(r"['\"](#[0-9A-Fa-f]{6})['\"]", r"\1", code)
 
     if gris:
-        # #DAAB3A -> color(g), d'apres la luminance
+        # #DAAB3A -> 171, d'apres la luminance
         code = re.sub(
             r"(?<![\w#])(#[0-9A-Fa-f]{6})\b",
-            lambda m: "color(" + str(_gris_depuis_hex(m.group(1))) + ")",
+            lambda m: str(_gris_depuis_hex(m.group(1))),
             code
         )
+        code = _renommer_pour_gris(code, palette)
 
     return code
+
+
+def _renommer_pour_gris(code, palette):
+    # BLEU_CLAIR -> FOND, BLEU -> REMPLISSAGE, ... (en une seule passe)
+    noms = {nom: v[2] for nom, v in palette.items() if v[2] != nom}
+    if not noms:
+        return code
+    motif = r"\b(" + "|".join(
+        re.escape(n) for n in sorted(noms, key=len, reverse=True)
+    ) + r")\b"
+    return re.sub(motif, lambda m: noms[m.group(1)], code)
 
 
 # ============================================================
@@ -800,7 +827,7 @@ def convert_and_run_and_save_image(
 
     code_python_couleur = _appliquer_palette_python(
         code_python,
-        {nom: repr(coul) for nom, (coul, _) in palette.items()}
+        {nom: repr(v[0]) for nom, v in palette.items()}
     )
 
     # --- Codes sources ------------------------------------------------
@@ -825,7 +852,7 @@ def convert_and_run_and_save_image(
 
         code_python_gris = _appliquer_palette_python(
             code_python,
-            {nom: str(g) for nom, (_, g) in palette.items()}
+            {nom: str(v[1]) for nom, v in palette.items()}
         )
 
         # Couleurs ecrites en dur dans le code (hors palette) :
@@ -838,6 +865,8 @@ def convert_and_run_and_save_image(
 
         with open(chemins["java_gris"], "w", encoding="utf-8") as f:
             f.write(_code_java_propre(code_java, palette, gris=True))
+
+        code_python_gris = _renommer_pour_gris(code_python_gris, palette)
 
         with open(chemins["python_gris"], "w", encoding="utf-8") as f:
             f.write(code_python_gris)
