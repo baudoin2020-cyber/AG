@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-PROCESSING_RUNNER_VERSION = "2026-11-04-01"
+PROCESSING_RUNNER_VERSION = "2026-11-04-02"
 
 # ============================================================
 # PROCESSING JAVA -> PROCESSING PYTHON
@@ -420,19 +420,31 @@ def convert_folder(folder="."):
 # Dans le notebook :
 #
 #     PALETTE = {
-#         # nom utilise dans le code Java : (couleur, niveau de gris)
-#         "BLEU_CLAIR": ("#DFEAF7", 235),   # fond
-#         "BLEU":       ("#003366",  40),   # remplissage
-#         "ORANGE":     ("#FF7A00", 110),   # trait 1
-#         "VERT":       ("#7ED321", 170),   # trait 2
+#         # nom utilise dans le code Java : (couleur, gris en %)
+#         "BLEU_CLAIR": ("#DFEAF7", "15%"),   # fond
+#         "BLEU":       ("#003366", "70%"),   # remplissage
+#         "ORANGE":     ("#FF7A00", "50%"),   # trait 1
+#         "VERT":       ("#7ED321", "30%"),   # trait 2
 #     }
 #     definir_palette(PALETTE)
 #
 # Les noms de la palette remplacent les declarations du code Java
 # (int BLEU = '#003366'; ...). Un nom absent du code est ajoute juste
-# apres size(). Niveau de gris : 0 = noir, 255 = blanc.
+# apres size().
+#
+# Gris en % = taux d'encre noire (convention imprimerie) :
+# 0% = blanc, 100% = noir. Les gris de la palette doivent rester
+# entre GRIS_MIN et GRIS_MAX.
+
+GRIS_MIN = 15   # %
+GRIS_MAX = 70   # %
 
 _PALETTE = {}
+
+
+def _gris_vers_255(pourcentage):
+    # 15% d'encre -> 217 ; 70% d'encre -> 77
+    return int(round(255 * (1 - pourcentage / 100.0)))
 
 
 def _verifier_palette(palette):
@@ -464,12 +476,25 @@ def _verifier_palette(palette):
                 + " (format attendu '#RRGGBB')."
             )
 
-        if not isinstance(gris, (int, float)) or not 0 <= gris <= 255:
+        if isinstance(gris, str):
+            gris = gris.strip().rstrip("%").strip()
+
+        try:
+            gris = float(gris)
+        except (TypeError, ValueError):
             raise ValueError(
-                nom + " : le niveau de gris doit etre entre 0 et 255."
+                nom + " : gris invalide " + repr(valeur[1])
+                + " (exemple attendu : '40%')."
             )
 
-        propre[nom] = (couleur.upper(), int(gris))
+        if not GRIS_MIN <= gris <= GRIS_MAX:
+            raise ValueError(
+                nom + " : le gris doit etre entre "
+                + str(GRIS_MIN) + "% et " + str(GRIS_MAX)
+                + "% (valeur donnee : " + str(valeur[1]) + ")."
+            )
+
+        propre[nom] = (couleur.upper(), _gris_vers_255(gris))
 
     return propre
 
@@ -477,7 +502,7 @@ def _verifier_palette(palette):
 def definir_palette(palette):
     """
     Fixe la palette utilisee par defaut par convert_and_run_and_save_image.
-    palette : {nom: (couleur '#RRGGBB', niveau de gris 0-255)}
+    palette : {nom: (couleur '#RRGGBB', gris en % entre GRIS_MIN et GRIS_MAX)}
     """
 
     global _PALETTE
@@ -486,11 +511,14 @@ def definir_palette(palette):
 
 
 def _gris_depuis_hex(couleur):
-    # Luminance perceptive (ITU-R BT.601).
+    # Luminance perceptive (ITU-R BT.601), ramenee dans la plage
+    # GRIS_MIN..GRIS_MAX : blanc -> GRIS_MIN, noir -> GRIS_MAX.
     r = int(couleur[1:3], 16)
     g = int(couleur[3:5], 16)
     b = int(couleur[5:7], 16)
-    return int(round(0.299 * r + 0.587 * g + 0.114 * b))
+    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+    encre = GRIS_MIN + (GRIS_MAX - GRIS_MIN) * (1 - lum)
+    return _gris_vers_255(encre)
 
 
 def _inserer_apres_size(lignes, nouvelles):
@@ -678,7 +706,7 @@ def convert_and_run_and_save_image(
         code_java/<nom>.pde      code Processing Java
         code_python/<nom>.py     code Processing Python
 
-    palette : {nom: (couleur, niveau de gris)} ; par defaut celle
+    palette : {nom: (couleur, gris en %)} ; par defaut celle
               fixee avec definir_palette().
     graine  : graine du hasard (tiree au sort si None) ; la meme sert
               pour les deux images.
