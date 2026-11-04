@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-PROCESSING_RUNNER_VERSION = "2026-09-06-01"
+PROCESSING_RUNNER_VERSION = "2026-11-04-01"
 
 # ============================================================
 # PROCESSING JAVA -> PROCESSING PYTHON
@@ -414,86 +414,192 @@ def convert_folder(folder="."):
 
 
 # ============================================================
-# FONCTION UNIQUE A UTILISER DANS LE NOTEBOOK
+# PALETTE : COULEURS ET NIVEAUX DE GRIS
+# ============================================================
+#
+# Dans le notebook :
+#
+#     PALETTE = {
+#         # nom utilise dans le code Java : (couleur, niveau de gris)
+#         "BLEU_CLAIR": ("#DFEAF7", 235),   # fond
+#         "BLEU":       ("#003366",  40),   # remplissage
+#         "ORANGE":     ("#FF7A00", 110),   # trait 1
+#         "VERT":       ("#7ED321", 170),   # trait 2
+#     }
+#     definir_palette(PALETTE)
+#
+# Les noms de la palette remplacent les declarations du code Java
+# (int BLEU = '#003366'; ...). Un nom absent du code est ajoute juste
+# apres size(). Niveau de gris : 0 = noir, 255 = blanc.
+
+_PALETTE = {}
+
+
+def _verifier_palette(palette):
+
+    propre = {}
+
+    for nom, valeur in palette.items():
+
+        if not re.fullmatch(r"[A-Za-z_]\w*", nom):
+            raise ValueError(
+                "Nom de couleur invalide : " + repr(nom)
+            )
+
+        if not isinstance(valeur, (tuple, list)) or len(valeur) != 2:
+            raise ValueError(
+                nom + " : il faut un couple (couleur, niveau de gris), "
+                "par exemple ('#003366', 40)."
+            )
+
+        couleur, gris = valeur
+        couleur = str(couleur).strip()
+
+        if not couleur.startswith("#"):
+            couleur = "#" + couleur
+
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", couleur):
+            raise ValueError(
+                nom + " : couleur invalide " + repr(valeur[0])
+                + " (format attendu '#RRGGBB')."
+            )
+
+        if not isinstance(gris, (int, float)) or not 0 <= gris <= 255:
+            raise ValueError(
+                nom + " : le niveau de gris doit etre entre 0 et 255."
+            )
+
+        propre[nom] = (couleur.upper(), int(gris))
+
+    return propre
+
+
+def definir_palette(palette):
+    """
+    Fixe la palette utilisee par defaut par convert_and_run_and_save_image.
+    palette : {nom: (couleur '#RRGGBB', niveau de gris 0-255)}
+    """
+
+    global _PALETTE
+    _PALETTE = _verifier_palette(palette)
+    return dict(_PALETTE)
+
+
+def _gris_depuis_hex(couleur):
+    # Luminance perceptive (ITU-R BT.601).
+    r = int(couleur[1:3], 16)
+    g = int(couleur[3:5], 16)
+    b = int(couleur[5:7], 16)
+    return int(round(0.299 * r + 0.587 * g + 0.114 * b))
+
+
+def _inserer_apres_size(lignes, nouvelles):
+    for i, ligne in enumerate(lignes):
+        if re.match(r"\s*size\s*\(", ligne):
+            return lignes[:i + 1] + nouvelles + lignes[i + 1:]
+    return nouvelles + lignes
+
+
+def _appliquer_palette_python(code_python, valeurs):
+    """
+    valeurs : {nom: valeur Python sous forme de texte}
+    Remplace les affectations existantes, ajoute les noms manquants.
+    """
+
+    lignes = code_python.splitlines()
+    trouves = set()
+
+    for i, ligne in enumerate(lignes):
+        m = re.match(r"^(\s*)(\w+)\s*=(?!=)", ligne)
+        if m and m.group(2) in valeurs:
+            lignes[i] = m.group(1) + m.group(2) + " = " + valeurs[m.group(2)]
+            trouves.add(m.group(2))
+
+    # On n'ajoute que les noms reellement utilises dans le code.
+    manquants = [
+        nom + " = " + v
+        for nom, v in valeurs.items()
+        if nom not in trouves
+        and re.search(r"\b" + nom + r"\b", code_python)
+    ]
+
+    if manquants:
+        lignes = _inserer_apres_size(lignes, manquants)
+
+    return "\n".join(lignes) + "\n"
+
+
+def _code_java_propre(code_java, palette):
+    """
+    Version .pde valide pour Processing : couleurs de la palette
+    declarees en 'color NOM = #RRGGBB;' et couleurs sans guillemets.
+    """
+
+    lignes = code_java.strip("\n").splitlines()
+    trouves = set()
+
+    for i, ligne in enumerate(lignes):
+        m = re.match(
+            r"^(\s*)(?:int|color)\s+(\w+)\s*=\s*[^;]*;\s*$",
+            ligne
+        )
+        if m and m.group(2) in palette:
+            lignes[i] = (
+                m.group(1) + "color " + m.group(2)
+                + " = " + palette[m.group(2)][0] + ";"
+            )
+            trouves.add(m.group(2))
+
+    manquants = [
+        "color " + nom + " = " + coul + ";"
+        for nom, (coul, _) in palette.items()
+        if nom not in trouves
+        and re.search(r"\b" + nom + r"\b", code_java)
+    ]
+
+    if manquants:
+        lignes = _inserer_apres_size(lignes, manquants)
+
+    code = "\n".join(lignes) + "\n"
+
+    # '#DFEAF7' -> #DFEAF7 (syntaxe Processing)
+    code = re.sub(r"['\"](#[0-9A-Fa-f]{6})['\"]", r"\1", code)
+
+    return code
+
+
+# ============================================================
+# EXECUTION AVEC ag2
 # ============================================================
 
-def convert_and_run_and_save_image(code_java, nom_image):
-    """
-    Convertit du Processing Java en Python, execute le code avec ag2.py,
-    puis enregistre le dessin dans le repertoire images.
+_FONCTIONS_AG2 = (
+    "size", "background", "stroke", "noStroke",
+    "fill", "noFill", "strokeWeight", "point",
+    "line", "circle", "ellipse", "rect", "square",
+    "triangle", "arc", "textSize", "text",
+    "random", "randomSeed", "clear", "dist"
+)
 
-    Exemple :
-        convert_and_run_and_save_image(code_java, "grille.png")
-    """
 
-    import os
-
-    if not isinstance(nom_image, str) or not nom_image.strip():
-        raise ValueError(
-            "Le nom du fichier image ne peut pas etre vide."
-        )
-
-    # Le parametre represente uniquement le nom du fichier.
-    nom_image = os.path.basename(nom_image.strip())
-
-    if not nom_image.lower().endswith(".png"):
-        nom_image += ".png"
-
-    dossier_images = os.path.join(
-        os.getcwd(),
-        "images"
-    )
-
-    if not os.path.isdir(dossier_images):
-        os.makedirs(dossier_images)
-
-    chemin_image = os.path.join(
-        dossier_images,
-        nom_image
-    )
-
-    code_python, warnings = convert_processing_text(
-        code_java
-    )
+def _preparer_pour_ag2(code_python):
 
     # Avec "from ag2 import *", width et height seraient copies avant
     # l'appel a size() et resteraient donc egaux a 0. On les lit
     # directement dans le module afin de toujours obtenir leur valeur
     # actualisee.
-    code_python = re.sub(
-        r"(?<![\w.])width\b",
-        "ag2.width",
-        code_python
-    )
-
-    code_python = re.sub(
-        r"(?<![\w.])height\b",
-        "ag2.height",
-        code_python
-    )
+    code_python = re.sub(r"(?<![\w.])width\b", "ag2.width", code_python)
+    code_python = re.sub(r"(?<![\w.])height\b", "ag2.height", code_python)
 
     # Appels explicites au module : on evite toute copie ou collision
     # de noms provoquee par "from ag2 import *".
-    fonctions_ag2 = (
-        "size", "background", "stroke", "noStroke",
-        "fill", "noFill", "strokeWeight", "point",
-        "line", "circle", "ellipse", "rect", "square",
-        "triangle", "arc", "textSize", "text",
-        "random", "randomSeed", "clear", "dist"
-    )
-
-    for nom_fonction in fonctions_ag2:
+    for nom_fonction in _FONCTIONS_AG2:
         code_python = re.sub(
-            r"(?<![\w.])"
-            + nom_fonction
-            + r"\s*\(",
-            "ag2."
-            + nom_fonction
-            + "(",
+            r"(?<![\w.])" + nom_fonction + r"\s*\(",
+            "ag2." + nom_fonction + "(",
             code_python
         )
 
-    code_python = (
+    return (
         "import ag2\n"
         "if not hasattr(ag2, 'dist'):\n"
         "    def _dist(x1, y1, x2, y2):\n"
@@ -502,16 +608,22 @@ def convert_and_run_and_save_image(code_java, nom_image):
         + code_python
     )
 
+
+def _executer_et_enregistrer(code_python, chemin_image, graine):
+
+    import ag2
+
+    # Meme graine pour la version couleur et la version grise :
+    # les dessins aleatoires sont identiques.
+    ag2.randomSeed(graine)
+
     programme = compile(
-        code_python,
+        _preparer_pour_ag2(code_python),
         "<code Processing converti>",
         "exec"
     )
 
-    espace = {
-        "__name__": "__main__"
-    }
-
+    espace = {"__name__": "__main__"}
     exec(programme, espace, espace)
 
     # Fonctionne aussi avec la structure Processing setup()/draw().
@@ -524,44 +636,182 @@ def convert_and_run_and_save_image(code_java, nom_image):
     module_ag2 = espace.get("ag2")
 
     if module_ag2 is None:
-        raise RuntimeError(
-            "Le module ag2.py est introuvable."
-        )
+        raise RuntimeError("Le module ag2.py est introuvable.")
 
     module_ag2.save(chemin_image)
 
-    if not os.path.isfile(chemin_image):
-        raise RuntimeError(
-            "Le dessin n'a pas ete enregistre."
+    if not __import__("os").path.isfile(chemin_image):
+        raise RuntimeError("Le dessin n'a pas ete enregistre.")
+
+    # Evite qu'un ancien hook de ag2 reaffiche la figure.
+    module_ag2._dirty = False
+
+
+def _forcer_niveaux_de_gris(chemin_image):
+    # Securite : toute couleur residuelle (lissage, couleur non prevue)
+    # est ramenee en gris. Sans Pillow, l'image reste telle quelle.
+    try:
+        from PIL import Image as _PILImage
+        _PILImage.open(chemin_image).convert("L").save(chemin_image)
+    except ImportError:
+        pass
+
+
+# ============================================================
+# FONCTION UNIQUE A UTILISER DANS LE NOTEBOOK
+# ============================================================
+
+def convert_and_run_and_save_image(
+    code_java,
+    nom_image,
+    niveaux_de_gris=True,
+    palette=None,
+    graine=None
+):
+    """
+    Convertit du Processing Java en Python, execute le code avec ag2.py
+    et enregistre :
+
+        images/<nom>.png         dessin en couleur
+        images_gris/<nom>.png    dessin en niveaux de gris
+                                 (si niveaux_de_gris=True)
+        code_java/<nom>.pde      code Processing Java
+        code_python/<nom>.py     code Processing Python
+
+    palette : {nom: (couleur, niveau de gris)} ; par defaut celle
+              fixee avec definir_palette().
+    graine  : graine du hasard (tiree au sort si None) ; la meme sert
+              pour les deux images.
+
+    Exemple :
+        convert_and_run_and_save_image(code_java, "grille.png")
+        convert_and_run_and_save_image(code_java, "grille.png",
+                                       niveaux_de_gris=False)
+    """
+
+    import os
+    import random as _random
+
+    if not isinstance(nom_image, str) or not nom_image.strip():
+        raise ValueError(
+            "Le nom du fichier image ne peut pas etre vide."
         )
+
+    # Le parametre represente uniquement le nom du fichier.
+    nom_image = os.path.basename(nom_image.strip())
+
+    if not nom_image.lower().endswith(".png"):
+        nom_image += ".png"
+
+    nom_base = nom_image[:-4]
+
+    palette = (
+        _verifier_palette(palette)
+        if palette is not None
+        else dict(_PALETTE)
+    )
+
+    if graine is None:
+        graine = _random.randrange(1, 10**9)
+
+    racine = os.getcwd()
+    dossiers = {
+        cle: os.path.join(racine, nom)
+        for cle, nom in (
+            ("couleur", "images"),
+            ("gris", "images_gris"),
+            ("java", "code_java"),
+            ("python", "code_python"),
+        )
+    }
+
+    for cle, dossier in dossiers.items():
+        if cle == "gris" and not niveaux_de_gris:
+            continue
+        if not os.path.isdir(dossier):
+            os.makedirs(dossier)
+
+    chemins = {
+        "couleur": os.path.join(dossiers["couleur"], nom_image),
+        "java": os.path.join(dossiers["java"], nom_base + ".pde"),
+        "python": os.path.join(dossiers["python"], nom_base + ".py"),
+    }
+
+    if niveaux_de_gris:
+        chemins["gris"] = os.path.join(dossiers["gris"], nom_image)
+
+    # --- Conversion -------------------------------------------------
+
+    code_python, warnings = convert_processing_text(code_java)
+
+    code_python_couleur = _appliquer_palette_python(
+        code_python,
+        {nom: repr(coul) for nom, (coul, _) in palette.items()}
+    )
+
+    # --- Codes sources ------------------------------------------------
+
+    with open(chemins["java"], "w", encoding="utf-8") as f:
+        f.write(_code_java_propre(code_java, palette))
+
+    with open(chemins["python"], "w", encoding="utf-8") as f:
+        f.write(code_python_couleur)
+
+    # --- Image en couleur --------------------------------------------
+
+    _executer_et_enregistrer(
+        code_python_couleur,
+        chemins["couleur"],
+        graine
+    )
+
+    # --- Image en niveaux de gris ------------------------------------
+
+    if niveaux_de_gris:
+
+        code_python_gris = _appliquer_palette_python(
+            code_python,
+            {nom: str(g) for nom, (_, g) in palette.items()}
+        )
+
+        # Couleurs ecrites en dur dans le code (hors palette) :
+        # converties d'apres leur luminance.
+        code_python_gris = re.sub(
+            r"['\"](#[0-9A-Fa-f]{6})['\"]",
+            lambda m: str(_gris_depuis_hex(m.group(1))),
+            code_python_gris
+        )
+
+        _executer_et_enregistrer(
+            code_python_gris,
+            chemins["gris"],
+            graine
+        )
+
+        _forcer_niveaux_de_gris(chemins["gris"])
+
+    # --- Compte rendu -----------------------------------------------
 
     if warnings:
         print("AVERTISSEMENTS :")
-
         for warning in warnings:
             print(" - " + warning)
 
-    # Dans Jupyter, affiche explicitement le fichier qui vient d'etre
-    # enregistre. Cela evite qu'un ancien hook de ag2 affiche une figure
-    # provenant d'une execution precedente.
+    # Dans Jupyter, affiche explicitement les fichiers qui viennent
+    # d'etre enregistres.
     try:
-        module_ag2._dirty = False
-
         from IPython.display import display
         from IPython.display import Image
-
-        display(
-            Image(
-                filename=chemin_image
-            )
-        )
-
+        display(Image(filename=chemins["couleur"]))
+        if niveaux_de_gris:
+            display(Image(filename=chemins["gris"]))
     except Exception:
         pass
 
-    print(
-        "Image enregistree : "
-        + chemin_image
-    )
+    print("Image couleur : " + chemins["couleur"])
+    if niveaux_de_gris:
+        print("Image gris    : " + chemins["gris"])
+    print("Code Java     : " + chemins["java"])
+    print("Code Python   : " + chemins["python"])
 
-    return chemin_image
+    return chemins
