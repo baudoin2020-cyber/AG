@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-PROCESSING_RUNNER_VERSION = "2026-11-05-02"
+PROCESSING_RUNNER_VERSION = "2026-11-05-04"
 
 # ============================================================
 # BOUCLES for
@@ -19,6 +19,47 @@ def _est_float(expr, variables_float):
     )
 
 
+def _for_en_while(init, cond, maj):
+    # for (init; cond; maj) { corps }  ->  init / while cond: corps ; maj
+    debut = (init + '\n') if init else ''
+    return (
+        debut
+        + '\x01' + maj + '\x01'
+        + 'while ' + (cond if cond else 'True') + ':'
+    )
+
+
+def _sortir_increments(ligne):
+
+    if re.match(r'\s*for\s*\(', ligne):
+        return ligne
+
+    # Instruction seule (i++; ou ++i;) : rien a faire ici
+    if re.fullmatch(r'\s*(\+\+|--)?\w+(\+\+|--)?\s*;?\s*\}?\s*', ligne):
+        return ligne
+
+    apres, avant = [], []
+
+    def post(m):
+        apres.append(m.group(1) + (' += 1' if m.group(2) == '++' else ' -= 1'))
+        return m.group(1)
+
+    def pre(m):
+        avant.append(m.group(2) + (' += 1' if m.group(1) == '++' else ' -= 1'))
+        return m.group(2)
+
+    nouvelle = re.sub(r'\b(\w+)(\+\+|--)(?!\s*[;)]?\s*$)', post, ligne)
+    nouvelle = re.sub(r'(\+\+|--)(\w+)\b', pre, nouvelle)
+
+    if not apres and not avant:
+        return ligne
+
+    m = re.match(r'(\s*)(.*?)(;?)(\s*\}?\s*)$', nouvelle)
+    indent, corps, _, fin = m.groups()
+    morceaux = avant + [corps] + apres
+    return indent + '; '.join(morceaux) + ';' + fin
+
+
 def _convertir_for(m, warnings, variables_float=()):
 
     texte = m.group(0)
@@ -34,8 +75,7 @@ def _convertir_for(m, warnings, variables_float=()):
         r'(?:(int|float|double|long)\s+)?(\w+)\s*=\s*(.+)', init
     )
     if not mi:
-        warnings.append("Boucle for non convertie : " + texte)
-        return texte
+        return _for_en_while(init, cond, maj)
 
     type_var, var, debut = mi.group(1), mi.group(2), mi.group(3).strip()
     v = re.escape(var)
@@ -57,8 +97,8 @@ def _convertir_for(m, warnings, variables_float=()):
 
     mc = re.fullmatch(v + r'\s*(<=|<|>=|>)\s*(.+)', cond)
     if not mc:
-        warnings.append("Boucle for non convertie : " + texte)
-        return texte
+        # Condition autre que "i < fin" (ex. i*pas < c) : boucle while
+        return _for_en_while(init, cond, maj)
 
     op, fin = mc.group(1), mc.group(2).strip()
 
@@ -86,8 +126,7 @@ def _convertir_for(m, warnings, variables_float=()):
             break
 
     if pas is None:
-        warnings.append("Boucle for non convertie : " + texte)
-        return texte
+        return _for_en_while(init, cond, maj)
 
     croissant = not pas.startswith('-')
 
@@ -96,6 +135,12 @@ def _convertir_for(m, warnings, variables_float=()):
             "Boucle for : sens du pas incoherent avec la condition : "
             + texte
         )
+
+    # Division entre entiers : en Java step/2 reste un entier.
+    def entier(e):
+        return 'int(' + e + ')' if '/' in e else e
+
+    debut, fin, pas = entier(debut), entier(fin), entier(pas)
 
     if op in ('<=', '>='):
         decalage = 1 if op == '<=' else -1
@@ -173,6 +218,12 @@ def convert_processing_text(code):
     # for (x = 50; x <= 1200; x += 250) line(...);   (sans accolades)
     # for (int i = 10; i > 0; i--) { ... }
     #   -> for i in range(debut, fin, pas):
+
+    # Incrementation dans une expression : text(num++, x, y);
+    #   -> text(num, x, y); num += 1   (et ++num : avant l'instruction)
+    code = '\n'.join(
+        _sortir_increments(ligne) for ligne in code.split('\n')
+    )
 
     # Boucle sur une seule ligne, sans accolades : on ajoute les accolades.
     code = re.sub(
@@ -276,6 +327,13 @@ def convert_processing_text(code):
     # --------------------------------------------------------
     # Variables Java
     # --------------------------------------------------------
+
+    # int x = a / b;  -> x = int(a / b)   (division entiere de Java)
+    code = re.sub(
+        r'\b(?:int|long|short|byte)\s+(\w+)\s*=\s*([^;\n]*/[^;\n]*);',
+        r'\1 = int(\2);',
+        code
+    )
 
     # int x = 10;
     code = re.sub(
