@@ -15,7 +15,7 @@ except Exception:
     Image = None
 
 
-AG_VERSION = "2026-11-05-01"
+AG_VERSION = "2026-11-05-02"
 
 _fig = None
 _ax = None
@@ -247,9 +247,17 @@ def size(w, h):
     global width, height
     global _zorder
     global _scaleX, _scaleY
+    global _stroke, _fill, _strokeWeight, _textSize
 
     width = w
     height = h
+
+    # Comme dans Processing, chaque dessin repart des reglages par
+    # defaut : rien n'est herite du dessin precedent.
+    _stroke = (0.0, 0.0, 0.0)      # trait noir
+    _fill = (1.0, 1.0, 1.0)        # remplissage blanc
+    _strokeWeight = 1
+    _textSize = 12
     _background_shape = None
     _zorder = 1
     _scaleX = 1.0
