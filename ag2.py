@@ -15,7 +15,7 @@ except Exception:
     Image = None
 
 
-AG_VERSION = "2026-10-28-01"
+AG_VERSION = "2026-11-05-01"
 
 _fig = None
 _ax = None
@@ -84,6 +84,36 @@ def _color(c):
         return (v, v, v)
 
     raise ValueError("Couleur inconnue")
+
+
+def _couleur_args(args):
+    """
+    Couleur a la maniere de Processing (valeurs entre 0 et 255) :
+        f(gris)              f(gris, alpha)
+        f(r, v, b)           f(r, v, b, alpha)
+        f('#RRGGBB')         f('#RRGGBB', alpha)
+    """
+
+    def n(x):
+        return min(max(float(x), 0.0), 255.0) / 255.0
+
+    if len(args) == 1:
+        return _color(args[0])
+
+    if len(args) == 2:
+        c = args[0]
+        base = _color(c) if isinstance(c, str) else (n(c),) * 3
+        return tuple(base[:3]) + (n(args[1]),)
+
+    if len(args) == 3:
+        return tuple(n(x) for x in args)
+
+    if len(args) == 4:
+        return tuple(n(x) for x in args)
+
+    raise ValueError(
+        "Couleur : 1 a 4 valeurs attendues, " + str(len(args)) + " recues"
+    )
 
 
 def _next_zorder():
@@ -254,9 +284,9 @@ def size(w, h):
     _mark_dirty()
 
 
-def background(c):
+def background(*c):
 
-    color = _color(c)
+    color = _couleur_args(c)
 
     _fig.patch.set_facecolor(color)
     _ax.patch.set_facecolor(color)
@@ -265,11 +295,11 @@ def background(c):
     _mark_dirty()
 
 
-def stroke(c):
+def stroke(*c):
 
     global _stroke
 
-    _stroke = _color(c)
+    _stroke = _couleur_args(c)
 
 
 def noStroke():
@@ -279,11 +309,11 @@ def noStroke():
     _stroke = None
 
 
-def fill(c):
+def fill(*c):
 
     global _fill
 
-    _fill = _color(c)
+    _fill = _couleur_args(c)
 
 
 def noFill():
