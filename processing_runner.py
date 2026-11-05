@@ -1,7 +1,90 @@
 import re
 from pathlib import Path
 
-PROCESSING_RUNNER_VERSION = "2026-11-04-04"
+PROCESSING_RUNNER_VERSION = "2026-11-05-01"
+
+# ============================================================
+# BOUCLES for
+# ============================================================
+
+def _convertir_for(m, warnings):
+
+    texte = m.group(0)
+    parties = m.group(1).split(';')
+
+    if len(parties) != 3:
+        warnings.append("Boucle for non convertie : " + texte)
+        return texte
+
+    init, cond, maj = (p.strip() for p in parties)
+
+    mi = re.fullmatch(
+        r'(?:(?:int|float|long)\s+)?(\w+)\s*=\s*(.+)', init
+    )
+    if not mi:
+        warnings.append("Boucle for non convertie : " + texte)
+        return texte
+
+    var, debut = mi.group(1), mi.group(2).strip()
+    v = re.escape(var)
+
+    mc = re.fullmatch(v + r'\s*(<=|<|>=|>)\s*(.+)', cond)
+    if not mc:
+        warnings.append("Boucle for non convertie : " + texte)
+        return texte
+
+    op, fin = mc.group(1), mc.group(2).strip()
+
+    pas = None
+    for motif, signe in (
+        (v + r'\s*\+\+|\+\+\s*' + v, '+1'),
+        (v + r'\s*--|--\s*' + v, '-1'),
+        (v + r'\s*\+=\s*(.+)', '+'),
+        (v + r'\s*-=\s*(.+)', '-'),
+        (v + r'\s*=\s*' + v + r'\s*\+\s*(.+)', '+'),
+        (v + r'\s*=\s*' + v + r'\s*-\s*(.+)', '-'),
+    ):
+        mm = re.fullmatch(motif, maj)
+        if mm:
+            if signe == '+1':
+                pas = '1'
+            elif signe == '-1':
+                pas = '-1'
+            elif signe == '+':
+                pas = mm.group(1).strip()
+            else:
+                pas = '-' + mm.group(1).strip()
+                if not re.fullmatch(r'-\w+', pas):
+                    pas = '-(' + mm.group(1).strip() + ')'
+            break
+
+    if pas is None:
+        warnings.append("Boucle for non convertie : " + texte)
+        return texte
+
+    croissant = not pas.startswith('-')
+
+    if (op in ('<', '<=')) != croissant:
+        warnings.append(
+            "Boucle for : sens du pas incoherent avec la condition : "
+            + texte
+        )
+
+    if op in ('<=', '>='):
+        decalage = 1 if op == '<=' else -1
+        if re.fullmatch(r'-?\d+', fin):
+            fin = str(int(fin) + decalage)
+        else:
+            fin = fin + (' + 1' if decalage == 1 else ' - 1')
+
+    if pas == '1':
+        return 'for ' + var + ' in range(' + debut + ', ' + fin + '):'
+
+    return (
+        'for ' + var + ' in range('
+        + debut + ', ' + fin + ', ' + pas + '):'
+    )
+
 
 # ============================================================
 # PROCESSING JAVA -> PROCESSING PYTHON
@@ -42,33 +125,46 @@ def convert_processing_text(code):
     # IMPORTANT : à traiter avant la suppression des types Java
     # --------------------------------------------------------
 
-    # for (int i = 0; i < 10; i++) {
+    # for (int i = 0; i < 10; i++) { ... }
+    # for (int y = 3; y < 486; y = y + 23) { ... }
+    # for (x = 50; x <= 1200; x += 250) line(...);   (sans accolades)
+    # for (int i = 10; i > 0; i--) { ... }
+    #   -> for i in range(debut, fin, pas):
+
+    # Boucle sur une seule ligne, sans accolades : on ajoute les accolades.
     code = re.sub(
-        r'for\s*\(\s*int\s+(\w+)\s*=\s*([^;]+);'
-        r'\s*\1\s*<\s*([^;]+);'
-        r'\s*\1\+\+\s*\)\s*\{',
-        lambda m:
-            'for ' + m.group(1)
-            + ' in range('
-            + m.group(2).strip()
-            + ', '
-            + m.group(3).strip()
-            + '):',
+        r'(for\s*\((?:[^()]|\([^()]*\))*\))[ \t]*(?![ \t]*\{)([^\n{};]+;)',
+        r'\1 {\n\2\n}',
         code
     )
 
-    # for sans "int"
     code = re.sub(
-        r'for\s*\(\s*(\w+)\s*=\s*([^;]+);'
-        r'\s*\1\s*<\s*([^;]+);'
-        r'\s*\1\+\+\s*\)\s*\{',
-        lambda m:
-            'for ' + m.group(1)
-            + ' in range('
-            + m.group(2).strip()
-            + ', '
-            + m.group(3).strip()
-            + '):',
+        r'for\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{',
+        lambda m: _convertir_for(m, warnings),
+        code
+    )
+
+    # --------------------------------------------------------
+    # Conversions de type : (int) random(100) -> int(random(100))
+    # --------------------------------------------------------
+
+    code = re.sub(
+        r'\(\s*(int|float)\s*\)\s*'
+        r'(\w+\s*\((?:[^()]|\([^()]*\))*\)|\w+(?:\.\w+)?)',
+        r'\1(\2)',
+        code
+    )
+
+    # --------------------------------------------------------
+    # Declarations multiples : int a, b, c; -> a = b = c = None
+    # --------------------------------------------------------
+
+    code = re.sub(
+        r'\b(?:int|float|double|long|boolean|char|byte|short|String|color)'
+        r'\s+(\w+(?:\s*,\s*\w+)+)\s*;',
+        lambda m: ' = '.join(
+            v.strip() for v in m.group(1).split(',')
+        ) + ' = None;',
         code
     )
 
