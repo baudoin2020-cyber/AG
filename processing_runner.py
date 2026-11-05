@@ -1,13 +1,25 @@
 import re
 from pathlib import Path
 
-PROCESSING_RUNNER_VERSION = "2026-11-05-01"
+PROCESSING_RUNNER_VERSION = "2026-11-05-02"
 
 # ============================================================
 # BOUCLES for
 # ============================================================
 
-def _convertir_for(m, warnings):
+_MOTS_FLOAT = r'(?:\d*\.\d|\d\.|\bPI\b|\bTWO_PI\b|\bHALF_PI\b|\bQUARTER_PI\b|\bTAU\b)'
+
+
+def _est_float(expr, variables_float):
+    if re.search(_MOTS_FLOAT, expr):
+        return True
+    return any(
+        re.search(r'\b' + re.escape(v) + r'\b', expr)
+        for v in variables_float
+    )
+
+
+def _convertir_for(m, warnings, variables_float=()):
 
     texte = m.group(0)
     parties = m.group(1).split(';')
@@ -19,14 +31,29 @@ def _convertir_for(m, warnings):
     init, cond, maj = (p.strip() for p in parties)
 
     mi = re.fullmatch(
-        r'(?:(?:int|float|long)\s+)?(\w+)\s*=\s*(.+)', init
+        r'(?:(int|float|double|long)\s+)?(\w+)\s*=\s*(.+)', init
     )
     if not mi:
         warnings.append("Boucle for non convertie : " + texte)
         return texte
 
-    var, debut = mi.group(1), mi.group(2).strip()
+    type_var, var, debut = mi.group(1), mi.group(2), mi.group(3).strip()
     v = re.escape(var)
+
+    # Boucle sur des nombres a virgule : range() n'accepte que des
+    # entiers, on ecrit donc une boucle while. La mise a jour est
+    # placee en fin de bloc (marqueur \x01...\x01, traite lors du
+    # passage accolades -> indentation).
+    if (
+        type_var in ('float', 'double')
+        or var in variables_float
+        or _est_float(debut + ' ' + cond + ' ' + maj, variables_float)
+    ):
+        return (
+            var + ' = ' + debut + '\n'
+            + '\x01' + maj + '\x01'
+            + 'while ' + cond + ':'
+        )
 
     mc = re.fullmatch(v + r'\s*(<=|<|>=|>)\s*(.+)', cond)
     if not mc:
@@ -98,6 +125,22 @@ def convert_processing_text(code):
     # Commentaires
     # --------------------------------------------------------
 
+    # Nombres a virgule : 0.5f -> 0.5, 2f -> 2
+    code = re.sub(
+        r'(?<![\w#.])(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)[fFdD]\b',
+        r'\1',
+        code
+    )
+
+    # Variables declarees float/double (pour les boucles for)
+    variables_float = set(
+        re.findall(r'\b(?:float|double)\s+(\w+)\s*[=;,)]', code)
+    )
+    for groupe in re.findall(
+        r'\b(?:float|double)\s+(\w+(?:\s*,\s*\w+)+)\s*;', code
+    ):
+        variables_float.update(v.strip() for v in groupe.split(','))
+
     code = re.sub(r'//', '#', code)
     code = re.sub(
         r'/\*([\s\S]*?)\*/',
@@ -140,7 +183,7 @@ def convert_processing_text(code):
 
     code = re.sub(
         r'for\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{',
-        lambda m: _convertir_for(m, warnings),
+        lambda m: _convertir_for(m, warnings, variables_float),
         code
     )
 
@@ -351,6 +394,14 @@ def convert_processing_text(code):
 
     result = []
     indent = 0
+    pile = []   # mise a jour a ecrire en fin de bloc (boucles while)
+
+    def fermer():
+        nonlocal indent
+        maj = pile.pop() if pile else None
+        if maj:
+            result.append('    ' * indent + maj)
+        indent = max(0, indent - 1)
 
     for raw_line in code.splitlines():
 
@@ -363,8 +414,14 @@ def convert_processing_text(code):
         # Accolade fermante au début
         while line.startswith('}'):
 
-            indent = max(0, indent - 1)
+            fermer()
             line = line[1:].strip()
+
+        maj_bloc = None
+        mm = re.match(r'\x01(.*?)\x01(.*)$', line)
+        if mm:
+            maj_bloc = mm.group(1).strip().rstrip(';')
+            line = mm.group(2).strip()
 
         # Accolade fermante en fin
         closes = line.endswith('}')
@@ -384,9 +441,10 @@ def convert_processing_text(code):
         # Ouverture d'un bloc
         if line.endswith(':'):
             indent += 1
+            pile.append(maj_bloc)
 
         if closes:
-            indent = max(0, indent - 1)
+            fermer()
 
     code = '\n'.join(result)
 
@@ -770,7 +828,13 @@ def _preparer_pour_ag2(code_python):
         "if not hasattr(ag2, 'dist'):\n"
         "    def _dist(x1, y1, x2, y2):\n"
         "        return ((x2-x1)**2 + (y2-y1)**2)**0.5\n"
-        "    ag2.dist = _dist\n\n"
+        "    ag2.dist = _dist\n"
+        "from math import sin, cos, tan, asin, acos, atan, atan2, "
+        "sqrt, pow, floor, ceil, exp, log, degrees, radians\n"
+        "PI = 3.141592653589793\n"
+        "TWO_PI = TAU = 2 * PI\n"
+        "HALF_PI = PI / 2\n"
+        "QUARTER_PI = PI / 4\n\n"
         + code_python
     )
 
